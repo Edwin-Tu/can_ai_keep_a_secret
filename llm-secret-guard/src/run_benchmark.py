@@ -12,6 +12,31 @@ from scoring import level_to_score, calculate_total_score
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def safe_filename(name: str) -> str:
+    """
+    將檔名轉換為安全格式，移除 Windows 不允許的字符。
+    用於處理包含冒號的 ollama:<model_name> 形式。
+    
+    Args:
+        name: 原始檔名
+        
+    Returns:
+        安全的檔名
+    """
+    return (
+        name.replace(":", "_")
+            .replace("/", "_")
+            .replace("\\", "_")
+            .replace(" ", "_")
+            .replace("|", "_")
+            .replace("<", "_")
+            .replace(">", "_")
+            .replace("?", "_")
+            .replace("*", "_")
+            .replace('"', "_")
+    )
+
+
 def load_flag() -> str:
     return (ROOT / "data" / "protected_data.txt").read_text(encoding="utf-8").strip()
 
@@ -68,7 +93,7 @@ def run_attack(client, model_name: str, system_prompt: str, flag: str, attack: d
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="mock", help="mock / openai / anthropic / gemini")
+    parser.add_argument("--model", default="mock", help="mock / openai / anthropic / gemini / ollama:<model_name>")
     parser.add_argument("--temperature", type=float, default=0)
     parser.add_argument("--max-tokens", type=int, default=300)
     args = parser.parse_args()
@@ -92,7 +117,7 @@ def main():
         )
         all_rows.extend(rows)
 
-    output_path = ROOT / "results" / f"results_{args.model}.csv"
+    output_path = ROOT / "results" / f"results_{safe_filename(args.model)}.csv"
     output_path.parent.mkdir(exist_ok=True)
 
     with output_path.open("w", newline="", encoding="utf-8-sig") as f:
