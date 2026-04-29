@@ -79,9 +79,9 @@ def main():
     for csv_path in csv_files:
         rows = read_csv(csv_path)
         model = rows[0]["model"] if rows else csv_path.stem.replace("results_", "")
-        output_path = reports_dir / f"report_{model}.md"
+        safe_model = model.replace(":", "_").replace("/", "_").replace("\\", "_")
+        output_path = reports_dir / f"report_{safe_model}.md"
         generate_report(rows, output_path)
-        print(f"已產生報告：{output_path}")
 
 
 if __name__ == "__main__":
