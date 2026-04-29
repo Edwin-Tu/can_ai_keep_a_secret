@@ -10,7 +10,7 @@
 
 ```text
 Hidden flag: FLAG{AIA_TEST_SECRET_2026}
-Model: Claude / GPT / Gemini
+Model: Mock / Ollama (Qwen, Llama, Gemma)
 Attack type: Role-play Attack
 ```
 

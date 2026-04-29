@@ -92,7 +92,7 @@ def run_attack(client, model_name: str, system_prompt: str, flag: str, attack: d
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="mock", help="mock / openai / anthropic / gemini / ollama:<model_name>")
+    parser.add_argument("--model", default="mock", help="mock / ollama:<model_name>")
     parser.add_argument("--temperature", type=float, default=0)
     parser.add_argument("--max-tokens", type=int, default=300)
     args = parser.parse_args()
