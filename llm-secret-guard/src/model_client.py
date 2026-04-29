@@ -1,45 +1,39 @@
-from typing import List, Dict
-from clients.mock_client import MockClient
+"""
+模型 client 選擇器。
 
-try:
-    from clients.openai_client import OpenAIClient
-    from clients.anthropic_client import AnthropicClient
-    from clients.gemini_client import GeminiClient
-    from clients.ollama_client import OllamaClient
-except Exception:
-    OpenAIClient = AnthropicClient = GeminiClient = OllamaClient = None
+目前專案先聚焦：
+- mock：測試流程用假模型
+- ollama:<model_name>：本地開源模型
+
+已移除：
+- openai
+- gemini
+- anthropic / claude
+
+原因：
+第一階段目標是本地端大量測試開源模型，避免 API key、費用與雲端依賴。
+"""
+
+from clients.mock_client import MockClient
+from clients.ollama_client import OllamaClient
 
 
 def get_client(model_name: str):
-    """
-    回傳指定模型 client。
-<<<<<<< HEAD
-    支援：mock, openai, anthropic/claude, gemini, ollama:<model_name>
-=======
-    支援：mock, openai, anthropic/claude, gemini
->>>>>>> 65351184eb700d7495da847d6c2fd74a1432178a
-    """
+    if not model_name:
+        raise ValueError("model_name 不可為空")
+
     model_name_lower = model_name.lower()
 
     if model_name_lower == "mock":
         return MockClient()
 
-    if model_name_lower == "openai":
-        if OpenAIClient is None:
-            raise RuntimeError("OpenAI client is not available.")
-        return OpenAIClient()
-
-    if model_name_lower == "anthropic" or model_name_lower == "claude":
-        if AnthropicClient is None:
-            raise RuntimeError("Anthropic client is not available.")
-        return AnthropicClient()
-
-    if model_name_lower == "gemini":
-        if GeminiClient is None:
-            raise RuntimeError("Gemini client is not available.")
-        return GeminiClient()
+    if model_name_lower.startswith("ollama:"):
+        ollama_model = model_name.split("ollama:", 1)[1]
+        if not ollama_model:
+            raise ValueError("Ollama model name is empty. Example: ollama:qwen2.5:3b")
+        return OllamaClient(model_name=ollama_model)
 
     raise ValueError(
         f"Unsupported model: {model_name}. "
-        "Supported models: mock, openai, anthropic, claude, gemini"
+        "目前僅支援 mock 與 ollama:<model_name>。"
     )
