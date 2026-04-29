@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parents[1]
 def safe_filename(name: str) -> str:
     """
     將檔名轉換為安全格式，移除 Windows 不允許的字符。
-    用於處理包含冒號的 ollama:<model_name> 形式。
     
     Args:
         name: 原始檔名

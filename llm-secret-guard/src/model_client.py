@@ -13,7 +13,11 @@ except Exception:
 def get_client(model_name: str):
     """
     回傳指定模型 client。
+<<<<<<< HEAD
     支援：mock, openai, anthropic/claude, gemini, ollama:<model_name>
+=======
+    支援：mock, openai, anthropic/claude, gemini
+>>>>>>> 65351184eb700d7495da847d6c2fd74a1432178a
     """
     model_name_lower = model_name.lower()
 
@@ -35,13 +39,7 @@ def get_client(model_name: str):
             raise RuntimeError("Gemini client is not available.")
         return GeminiClient()
 
-    if model_name_lower.startswith("ollama:"):
-        if OllamaClient is None:
-            raise RuntimeError("Ollama client is not available.")
-        ollama_model = model_name.replace("ollama:", "", 1)
-        return OllamaClient(model_name=ollama_model)
-
     raise ValueError(
         f"Unsupported model: {model_name}. "
-        "Supported: mock, openai, anthropic, claude, gemini, ollama:<model_name>"
+        "Supported models: mock, openai, anthropic, claude, gemini"
     )
