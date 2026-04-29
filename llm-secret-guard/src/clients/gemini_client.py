@@ -1,5 +1,11 @@
 import os
 from typing import List, Dict
+from google import genai
+from google.genai import types
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 try:
     from google import genai
@@ -28,6 +34,13 @@ class GeminiClient:
         
         self.client = genai.Client(api_key=api_key)
         self.model = model_name
+
+    def __init__(self, model: str = "gemini-2.0-flash"):
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("未找到 GEMINI_API_KEY，请在 .env 中设置。")
+        self.client = genai.Client(api_key=api_key)
+        self.model = model
 
     def generate(self, messages: List[Dict[str, str]], temperature: float = 0, max_tokens: int = 300) -> str:
         """

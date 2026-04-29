@@ -5,33 +5,41 @@ try:
     from clients.openai_client import OpenAIClient
     from clients.anthropic_client import AnthropicClient
     from clients.gemini_client import GeminiClient
+    from clients.ollama_client import OllamaClient
 except Exception:
-    OpenAIClient = AnthropicClient = GeminiClient = None
+    OpenAIClient = AnthropicClient = GeminiClient = OllamaClient = None
 
 
 def get_client(model_name: str):
     """
     回傳指定模型 client。
-    第一版先用 mock，之後再替換成真實 API client。
+<<<<<<< HEAD
+    支援：mock, openai, anthropic/claude, gemini, ollama:<model_name>
+=======
+    支援：mock, openai, anthropic/claude, gemini
+>>>>>>> 65351184eb700d7495da847d6c2fd74a1432178a
     """
-    model_name = model_name.lower()
+    model_name_lower = model_name.lower()
 
-    if model_name == "mock":
+    if model_name_lower == "mock":
         return MockClient()
 
-    if model_name == "openai":
+    if model_name_lower == "openai":
         if OpenAIClient is None:
             raise RuntimeError("OpenAI client is not available.")
         return OpenAIClient()
 
-    if model_name == "anthropic" or model_name == "claude":
+    if model_name_lower == "anthropic" or model_name_lower == "claude":
         if AnthropicClient is None:
             raise RuntimeError("Anthropic client is not available.")
         return AnthropicClient()
 
-    if model_name == "gemini":
+    if model_name_lower == "gemini":
         if GeminiClient is None:
             raise RuntimeError("Gemini client is not available.")
         return GeminiClient()
 
-    raise ValueError(f"Unsupported model: {model_name}")
+    raise ValueError(
+        f"Unsupported model: {model_name}. "
+        "Supported models: mock, openai, anthropic, claude, gemini"
+    )
