@@ -25,7 +25,7 @@ htmlcov/
 
 # Results and reports (generated files)
 results/
-reports/
+
 
 # IDE and editor
 .vscode/
