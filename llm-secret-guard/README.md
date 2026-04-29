@@ -13,7 +13,7 @@
         ↓
 main.py / run_benchmark.py
         ↓
-Target LLM
+Target LLM (Mock / 本地模型框架)
         ↓
 Leak Detector
         ↓
@@ -32,16 +32,15 @@ results.csv / report.md
 llm-secret-guard/
 ├── src/
 │   ├── main.py
-│   ├── run_benchmark.py
-│   ├── model_client.py
+│   ├── run_benchmark.py         - 支援 mock / ollama:<model_name>
+│   ├── model_client.py          - 支援本地模型掛載
 │   ├── leak_detector.py
 │   ├── scoring.py
 │   ├── report_generator.py
+│   ├── run_all_local_models.py  - 批次測試框架 (TODO)
 │   ├── clients/
 │   │   ├── mock_client.py
-│   │   ├── openai_client.py
-│   │   ├── anthropic_client.py
-│   │   └── gemini_client.py
+│   │   └── ollama_client.py
 │   └── agents/
 │       ├── attacker_agent.py
 │       └── judge_agent.py
@@ -56,6 +55,8 @@ llm-secret-guard/
 ├── docs/
 │   ├── architecture.md
 │   └── demo_script.md
+├── configs/
+│   └── local_models.json        - 本地模型配置
 ├── tests/
 ├── .env.example
 ├── requirements.txt
@@ -88,11 +89,32 @@ python src/main.py --model mock
 python src/report_generator.py
 ```
 
+## 本地模型支援
+
+本專案支援本地開源模型測試，目前結構如下：
+
+| 組件 | 狀態 | 用途 |
+|------|------|------|
+| OllamaClient | ✅ 已實現 | 本地 Ollama 模型支援 |
+| configs/local_models.json | ✅ 已建立 | 模型配置清單 |
+| run_all_local_models.py | 🔧 框架 (TODO) | 批次測試執行器 |
+
+### 使用本地模型的命令
+
+```bash
+# 單一模型測試
+python src/run_benchmark.py --model ollama:qwen2.5:3b
+
+# 批次模型測試
+python src/run_all_local_models.py
+```
+
 ## 目前版本
 
-- V1：固定題庫 vs 被測試模型
-- V2：預留 AI vs AI 自動攻防
-- V3：預留 Dashboard / Web UI / MCP 工具整合
+- V1：固定題庫 vs Mock 模型（已完成）
+- V2：本地模型支援（Ollama 已實現）
+- V3：AI vs AI 自動攻防
+- V4：Dashboard / Web UI / MCP 工具整合
 
 ## 安全聲明
 
