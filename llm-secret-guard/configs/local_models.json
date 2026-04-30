@@ -4,34 +4,44 @@
     "provider": "ollama",
     "description": "Qwen 2.5 3B - 輕量級，適合快速測試",
     "enabled": true,
-    "assigned_pc": "PC-01"
+    "assigned_pc": "PC-01",
+    "temperature": 0,
+    "max_tokens": null
   },
   {
     "name": "qwen2.5:7b",
     "provider": "ollama",
     "description": "Qwen 2.5 7B - 平衡型，推薦通用測試",
     "enabled": true,
-    "assigned_pc": "PC-02"
+    "assigned_pc": "PC-02",
+    "temperature": 0,
+    "max_tokens": null
   },
   {
     "name": "llama3.1:8b",
     "provider": "ollama",
     "description": "Llama 3.1 8B - 流行的開源模型",
     "enabled": true,
-    "assigned_pc": "PC-03"
+    "assigned_pc": "PC-03",
+    "temperature": 0,
+    "max_tokens": null
   },
   {
     "name": "gemma3:4b",
     "provider": "ollama",
     "description": "Gemma 3 4B - Google 輕量級模型",
     "enabled": true,
-    "assigned_pc": "PC-04"
+    "assigned_pc": "PC-04",
+    "temperature": 0,
+    "max_tokens": null
   },
   {
     "name": "deepseek-r1:7b",
     "provider": "ollama",
     "description": "DeepSeek R1 7B - 推理能力強",
     "enabled": false,
-    "assigned_pc": "PC-05"
+    "assigned_pc": "PC-05",
+    "temperature": 0,
+    "max_tokens": null
   }
 ]
