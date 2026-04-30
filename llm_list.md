@@ -108,16 +108,16 @@
 ## 小型模型
 
 ```bash
-ollama pull llama3.2:1b
-ollama pull llama3.2:3b
+ollama pull llama3.2:1b V
+ollama pull llama3.2:3b V
 ollama pull qwen2.5:0.5b
 ollama pull qwen2.5:1.5b
 ollama pull qwen2.5:3b
-ollama pull qwen2.5-coder:0.5b
-ollama pull qwen2.5-coder:1.5b
-ollama pull qwen2.5-coder:3b
+ollama pull qwen2.5-coder:0.5b V
+ollama pull qwen2.5-coder:1.5b V
+ollama pull qwen2.5-coder:3b V
 ollama pull gemma3:270m
-ollama pull gemma3:1b
+ollama pull gemma3:1b V
 ollama pull gemma3:4b
 ollama pull phi4-mini:3.8b
 ```

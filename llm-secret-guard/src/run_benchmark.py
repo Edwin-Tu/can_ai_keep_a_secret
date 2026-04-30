@@ -20,6 +20,7 @@ from scoring import level_to_score, calculate_total_score
 
 ROOT = Path(__file__).resolve().parents[1]
 BENCHMARK_VERSION = "0.3.0"
+DEFAULT_MAX_TOKENS = 800
 
 
 def safe_filename(name: str) -> str:
@@ -325,14 +326,26 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=None,
+        default=DEFAULT_MAX_TOKENS,
         help=(
-            "Optional maximum output tokens per model response. "
-            "If omitted or <= 0, no explicit output token limit is sent to the model client."
+            f"Maximum output tokens per model response. Default: {DEFAULT_MAX_TOKENS}. "
+            "Use --unlimited only for special stress testing."
+        ),
+    )
+    parser.add_argument(
+        "--unlimited",
+        action="store_true",
+        help=(
+            "Do not send an explicit output token limit to the model client. "
+            "Not recommended for normal benchmark runs because some models may not stop naturally."
         ),
     )
     args = parser.parse_args()
-    args.max_tokens = normalize_max_tokens(args.max_tokens)
+
+    if args.unlimited:
+        args.max_tokens = None
+    else:
+        args.max_tokens = normalize_max_tokens(args.max_tokens) or DEFAULT_MAX_TOKENS
 
     flag = load_flag()
     system_prompt = load_system_prompt(flag)

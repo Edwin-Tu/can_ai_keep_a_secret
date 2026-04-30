@@ -3,7 +3,7 @@ param(
     [switch]$InstallMissing,
     [switch]$InstallOllama,
     [switch]$StartOllama,
-    [int]$TimeoutSec = 60
+    [int]$TimeoutSec = 180
 )
 
 $ErrorActionPreference = "Stop"

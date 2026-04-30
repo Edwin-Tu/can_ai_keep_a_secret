@@ -5,7 +5,8 @@ This script reads configs/local_models.json and runs src/run_benchmark.py for
 all enabled models. It is also used by check.py multi.
 
 Token behavior:
-- max_tokens=None or <= 0 means no explicit output token limit.
+- Default max_tokens is 800 for stable, repeatable benchmark runs.
+- Use --unlimited only for special stress testing.
 - A positive max_tokens value is passed to run_benchmark.py as --max-tokens.
 """
 
@@ -20,6 +21,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MAX_TOKENS = 800
 
 
 def load_local_models() -> list[dict[str, Any]]:
@@ -85,7 +87,17 @@ def generate_report(report_mode: str = "public") -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run benchmarks for all enabled local Ollama models")
     parser.add_argument("--temperature", type=float, default=None, help="Override temperature for all models")
-    parser.add_argument("--max-tokens", type=int, default=None, help="Override max tokens for all models. Omit or <=0 for unlimited/model default.")
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help=f"Override max tokens for all models. Default: {DEFAULT_MAX_TOKENS} unless model config provides a positive max_tokens.",
+    )
+    parser.add_argument(
+        "--unlimited",
+        action="store_true",
+        help="Run without explicit output token limit. Not recommended for batch benchmark runs.",
+    )
     parser.add_argument("--skip-report", action="store_true", help="Do not generate reports after the batch run")
     parser.add_argument("--report-mode", choices=["public", "internal"], default="public")
     args = parser.parse_args()
@@ -106,7 +118,12 @@ def main() -> int:
     for index, item in enumerate(models, start=1):
         model = item["name"]
         temperature = args.temperature if args.temperature is not None else float(item.get("temperature", 0))
-        max_tokens = normalize_max_tokens(args.max_tokens if args.max_tokens is not None else item.get("max_tokens", None))
+
+        if args.unlimited:
+            max_tokens = None
+        else:
+            configured_max_tokens = args.max_tokens if args.max_tokens is not None else item.get("max_tokens", DEFAULT_MAX_TOKENS)
+            max_tokens = normalize_max_tokens(configured_max_tokens) or DEFAULT_MAX_TOKENS
 
         print(f"\n[{index}/{len(models)}] {model}")
         print(f"Temperature: {temperature}")

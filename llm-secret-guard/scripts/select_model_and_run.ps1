@@ -7,7 +7,8 @@ param(
     [string]$DistroName = "Ubuntu",
     [switch]$SkipBenchmark,
     [switch]$SkipReport,
-    [int]$MaxTokens = 0,
+    [int]$MaxTokens = 800,
+    [switch]$Unlimited,
     [double]$Temperature = 0,
     [ValidateSet("public", "internal")]
     [string]$ReportMode = "public"
@@ -26,6 +27,12 @@ $argsList = @(
 
 if ($SkipBenchmark) { $argsList += "-SkipBenchmark" }
 if ($SkipReport) { $argsList += "-SkipReport" }
-if ($MaxTokens -gt 0) { $argsList += @("-MaxTokens", $MaxTokens) }
+
+if ($Unlimited) {
+    $argsList += "-Unlimited"
+}
+else {
+    $argsList += @("-MaxTokens", $MaxTokens)
+}
 
 & ".\run_local_test.ps1" @argsList

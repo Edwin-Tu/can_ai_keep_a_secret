@@ -1,10 +1,14 @@
 param(
     [string]$DistroName = "Ubuntu",
-    [int]$TimeoutSec = 60,
+    [int]$TimeoutSec = 180,
     [switch]$EnvOnly,
     [switch]$SkipBenchmark,
     [switch]$SkipReport,
-    [int]$MaxTokens = 0
+    [double]$Temperature = 0,
+    [int]$MaxTokens = 800,
+    [switch]$Unlimited,
+    [ValidateSet("public", "internal")]
+    [string]$ReportMode = "public"
 )
 
 $ErrorActionPreference = "Stop"
@@ -406,14 +410,20 @@ function Run-Benchmark {
     Write-Step "Step 7: Run benchmark"
 
     Write-Host "Model: $ModelArg" -ForegroundColor Green
+    Write-Host "Temperature: $Temperature" -ForegroundColor Green
 
-    if ($MaxTokens -gt 0) {
-        Write-Host "Max tokens: $MaxTokens" -ForegroundColor Green
-        & python "src/run_benchmark.py" "--model" $ModelArg "--max-tokens" $MaxTokens
+    if ($Unlimited) {
+        Write-Warn "Max tokens: unlimited / model default. This may cause timeout if the model does not stop naturally."
+        & python "src/run_benchmark.py" "--model" $ModelArg "--temperature" $Temperature "--unlimited"
     }
     else {
-        Write-Host "Max tokens: unlimited / model default" -ForegroundColor Green
-        & python "src/run_benchmark.py" "--model" $ModelArg
+        if ($MaxTokens -le 0) {
+            Write-Warn "MaxTokens <= 0 is not treated as unlimited. Falling back to 800 for benchmark stability. Use -Unlimited for no limit."
+            $script:MaxTokens = 800
+        }
+
+        Write-Host "Max tokens: $MaxTokens" -ForegroundColor Green
+        & python "src/run_benchmark.py" "--model" $ModelArg "--temperature" $Temperature "--max-tokens" $MaxTokens
     }
 
     if ($LASTEXITCODE -ne 0) {
@@ -427,7 +437,8 @@ function Run-Benchmark {
 function Generate-Report {
     Write-Step "Step 8: Generate report"
 
-    & python "src/report_generator.py"
+    Write-Host "Report mode: $ReportMode" -ForegroundColor Green
+    & python "src/report_generator.py" "--report-mode" $ReportMode
 
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "Report generation failed."
@@ -442,6 +453,7 @@ Write-Step "LLM Secret Guard Local Test Wizard"
 
 Write-Host "Project path: $Root"
 Write-Host "This script checks environment, starts Ollama, selects model, runs benchmark, and generates report."
+Write-Host "Default benchmark output limit: 800 tokens. Use -Unlimited only for special stress tests."
 
 Ensure-PythonDependencies
 
@@ -470,6 +482,13 @@ if (-not $SkipReport) {
 Write-Step "Done"
 
 Write-Host "Model: $modelArg" -ForegroundColor Green
+if ($Unlimited) {
+    Write-Host "Max tokens: unlimited / model default" -ForegroundColor Yellow
+}
+else {
+    Write-Host "Max tokens: $MaxTokens" -ForegroundColor Green
+}
+Write-Host "Report mode: $ReportMode" -ForegroundColor Green
 Write-Host "Results folder: results/"
 Write-Host "Reports folder: reports/"
 Write-Host ""
