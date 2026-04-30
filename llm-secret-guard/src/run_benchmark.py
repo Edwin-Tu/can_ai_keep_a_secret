@@ -14,13 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def safe_filename(name: str) -> str:
     """
-    將檔名轉換為安全格式，移除 Windows 不允許的字符。
-    
-    Args:
-        name: 原始檔名
-        
-    Returns:
-        安全的檔名
+    Convert a model name into a Windows-safe filename.
     """
     return (
         name.replace(":", "_")
@@ -49,21 +43,47 @@ def load_attacks() -> list[dict]:
     return json.loads((ROOT / "attacks" / "attacks.json").read_text(encoding="utf-8"))
 
 
-def run_attack(client, model_name: str, system_prompt: str, flag: str, attack: dict, temperature: float, max_tokens: int) -> list[dict]:
+def run_attack(
+    client,
+    model_name: str,
+    system_prompt: str,
+    flag: str,
+    attack: dict,
+    temperature: float,
+    max_tokens: int,
+    attack_index: int,
+    total_attacks: int,
+) -> list[dict]:
     """
-    單輪：每題獨立 session。
-    多輪：只在同一題內保留上下文，且固定依照 attacks.json 的 turns 執行。
+    Single-turn: each attack starts a fresh session.
+    Multi-turn: context is preserved only inside the same attack.
     """
     rows = []
     messages = [{"role": "system", "content": system_prompt}]
+    turns = attack["turns"]
+    total_turns = len(turns)
 
-    for turn_index, turn in enumerate(attack["turns"], start=1):
+    for turn_index, turn in enumerate(turns, start=1):
+        print(
+            f"[{attack_index}/{total_attacks}] "
+            f"{attack['id']} turn {turn_index}/{total_turns}: sending prompt...",
+            flush=True,
+        )
+
         messages.append(turn)
 
         response = client.generate(messages, temperature=temperature, max_tokens=max_tokens)
         messages.append({"role": "assistant", "content": response})
 
         leak = detect_leak(response, flag)
+        score = level_to_score(leak.leak_level)
+
+        print(
+            f"[{attack_index}/{total_attacks}] "
+            f"{attack['id']} turn {turn_index}/{total_turns}: "
+            f"done, leak_level={leak.leak_level}, score={score}",
+            flush=True,
+        )
 
         rows.append({
             "time": datetime.now().isoformat(timespec="seconds"),
@@ -75,15 +95,14 @@ def run_attack(client, model_name: str, system_prompt: str, flag: str, attack: d
             "prompt": turn["content"],
             "response": response,
             "leak_level": leak.leak_level,
-            "score": level_to_score(leak.leak_level),
+            "score": score,
             "result": leak.result,
             "format_violation": leak.format_violation,
             "reasons": " | ".join(leak.reasons),
             "description": attack.get("description", "")
         })
 
-        # 第一版可選：若完整洩漏，可停止該題。
-        # 為保持完全一致，預設不 early stop。
+        # Keep all attacks fully comparable. Do not early stop by default.
         # if leak.leak_level == 4:
         #     break
 
@@ -94,7 +113,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="mock", help="mock / ollama:<model_name>")
     parser.add_argument("--temperature", type=float, default=0)
-    parser.add_argument("--max-tokens", type=int, default=300)
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=800,
+        help="Maximum output tokens per model response. Default: 800",
+    )
     args = parser.parse_args()
 
     flag = load_flag()
@@ -102,9 +126,24 @@ def main():
     attacks = load_attacks()
     client = get_client(args.model)
 
+    print("==================================================", flush=True)
+    print("Run benchmark", flush=True)
+    print("==================================================", flush=True)
+    print(f"Model: {args.model}", flush=True)
+    print(f"Temperature: {args.temperature}", flush=True)
+    print(f"Max tokens: {args.max_tokens}", flush=True)
+    print(f"Total attacks: {len(attacks)}", flush=True)
+    print("==================================================", flush=True)
+
     all_rows = []
 
-    for attack in attacks:
+    for attack_index, attack in enumerate(attacks, start=1):
+        print(
+            f"[{attack_index}/{len(attacks)}] "
+            f"Running {attack['id']} - {attack.get('category', '')}",
+            flush=True,
+        )
+
         rows = run_attack(
             client=client,
             model_name=args.model,
@@ -113,8 +152,18 @@ def main():
             attack=attack,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
+            attack_index=attack_index,
+            total_attacks=len(attacks),
         )
         all_rows.extend(rows)
+
+        print(
+            f"[{attack_index}/{len(attacks)}] Done {attack['id']}",
+            flush=True,
+        )
+
+    if not all_rows:
+        raise RuntimeError("No benchmark rows were generated. Please check attacks/attacks.json.")
 
     output_path = ROOT / "results" / f"results_{safe_filename(args.model)}.csv"
     output_path.parent.mkdir(exist_ok=True)
@@ -126,8 +175,10 @@ def main():
 
     total_score = calculate_total_score(all_rows)
 
-    print(f"測試完成：{output_path}")
-    print(f"Secret Protection Score: {total_score}")
+    print("==================================================", flush=True)
+    print(f"Benchmark completed: {output_path}", flush=True)
+    print(f"Secret Protection Score: {total_score}", flush=True)
+    print("==================================================", flush=True)
 
 
 if __name__ == "__main__":
