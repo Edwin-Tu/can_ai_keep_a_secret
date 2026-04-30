@@ -15,7 +15,12 @@ When executed without arguments, this file starts an interactive test wizard.
 from __future__ import annotations
 
 import argparse
+import os
+import platform
+import shutil
+import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -74,6 +79,216 @@ def ask_yes_no(prompt: str, default: bool = True) -> bool:
     return value in {"y", "yes", "1", "true", "是", "好"}
 
 
+
+def ollama_local_name(model: str) -> str:
+    """Return the model name without the ollama: prefix."""
+    normalized = normalize_model_name(model)
+    if normalized.startswith("ollama:"):
+        return normalized.split("ollama:", 1)[1]
+    return normalized
+
+
+def find_ollama_executable() -> Optional[Path]:
+    """Find ollama executable from PATH or common install locations."""
+    found = shutil.which("ollama")
+    if found:
+        return Path(found)
+
+    candidates: list[Path] = []
+    local_appdata = os.environ.get("LOCALAPPDATA")
+    program_files = os.environ.get("ProgramFiles")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+
+    if local_appdata:
+        candidates.extend([
+            Path(local_appdata) / "Programs" / "Ollama" / "ollama.exe",
+            Path(local_appdata) / "Ollama" / "ollama.exe",
+        ])
+    if program_files:
+        candidates.append(Path(program_files) / "Ollama" / "ollama.exe")
+    if program_files_x86:
+        candidates.append(Path(program_files_x86) / "Ollama" / "ollama.exe")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def refresh_ollama_path() -> Optional[Path]:
+    """Add the detected Ollama folder to PATH for the current Python process."""
+    exe = find_ollama_executable()
+    if not exe:
+        return None
+
+    folder = str(exe.parent)
+    current_path = os.environ.get("PATH", "")
+    path_parts = [p.strip().lower() for p in current_path.split(os.pathsep) if p.strip()]
+    if folder.lower() not in path_parts:
+        os.environ["PATH"] = folder + os.pathsep + current_path
+    return exe
+
+
+def wait_for_ollama_api(timeout_sec: int = 60) -> bool:
+    """Wait for the local Ollama API to become available."""
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        if check_ollama_api(quiet=True):
+            return True
+        time.sleep(2)
+    return check_ollama_api(quiet=True)
+
+
+def start_ollama_server() -> bool:
+    """Start `ollama serve` in the background when the CLI exists."""
+    if check_ollama_api(quiet=True):
+        return True
+
+    exe = refresh_ollama_path()
+    if not exe:
+        return False
+
+    print("[INFO] Starting Ollama server in the background...")
+    try:
+        kwargs = {
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+            "stdin": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen([str(exe), "serve"], **kwargs)
+    except Exception as exc:
+        print(f"[WARN] Could not start Ollama server automatically: {exc}")
+        return False
+
+    return wait_for_ollama_api(timeout_sec=60)
+
+
+def install_ollama() -> bool:
+    """Install Ollama interactively using the platform's preferred installer."""
+    if find_ollama_executable():
+        refresh_ollama_path()
+        print("[OK] Ollama CLI already exists.")
+        return True
+
+    system = platform.system().lower()
+    print("\nOllama is required for local model testing, but it was not found.")
+
+    if system == "windows":
+        print("This will run the official Ollama Windows PowerShell installer:")
+        print("  irm https://ollama.com/install.ps1 | iex")
+        if not ask_yes_no("Download and install Ollama now?", default=True):
+            return False
+
+        powershell = (
+            shutil.which("powershell")
+            or shutil.which("powershell.exe")
+            or shutil.which("pwsh")
+            or shutil.which("pwsh.exe")
+        )
+        if not powershell:
+            print("[FAIL] PowerShell was not found. Please install Ollama manually from https://ollama.com/download/windows")
+            return False
+
+        cmd = [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "irm https://ollama.com/install.ps1 | iex",
+        ]
+        result = subprocess.run(cmd)
+        if result.returncode != 0:
+            print("[FAIL] Ollama installer returned a non-zero exit code.")
+            return False
+
+        exe = refresh_ollama_path()
+        if exe:
+            print(f"[OK] Ollama CLI detected: {exe}")
+        else:
+            print("[WARN] Ollama installer finished, but ollama.exe was not detected in this shell.")
+            print("       Please restart PowerShell / VS Code, then run `python llm_test.py env` again.")
+            return False
+
+        if start_ollama_server():
+            print("[OK] Ollama API is available.")
+            return True
+
+        print("[WARN] Ollama CLI is installed, but the API is not available yet.")
+        print("       Open the Ollama app or run `ollama serve`, then retry.")
+        return False
+
+    if system == "linux":
+        print("This will run the official Ollama Linux installer:")
+        print("  curl -fsSL https://ollama.com/install.sh | sh")
+        if not ask_yes_no("Download and install Ollama now?", default=True):
+            return False
+        result = subprocess.run("curl -fsSL https://ollama.com/install.sh | sh", shell=True)
+        refresh_ollama_path()
+        return result.returncode == 0 and start_ollama_server()
+
+    if system == "darwin":
+        print("Automatic macOS install is not enabled in this script.")
+        print("Please install Ollama from https://ollama.com/download, then rerun this command.")
+        return False
+
+    print(f"[FAIL] Unsupported platform for automatic Ollama install: {platform.system()}")
+    return False
+
+
+def ensure_ollama_ready(allow_install: bool = True) -> bool:
+    """Ensure Ollama CLI/API is available; optionally install/start it."""
+    if check_ollama_api(quiet=True):
+        return True
+
+    if start_ollama_server():
+        return True
+
+    if allow_install:
+        if install_ollama():
+            return check_ollama_api(quiet=True) or start_ollama_server()
+
+    print("[FAIL] Ollama API is not available at http://localhost:11434.")
+    return False
+
+
+def ensure_ollama_model_available(model: str, auto_pull: bool = False) -> bool:
+    """Ensure an Ollama model exists locally, offering to pull it when missing."""
+    normalized = normalize_model_name(model)
+    if normalized == "mock":
+        return True
+
+    if not normalized.startswith("ollama:"):
+        return True
+
+    if not ensure_ollama_ready(allow_install=True):
+        return False
+
+    local_name = ollama_local_name(normalized)
+    try:
+        installed = get_installed_models()
+    except Exception as exc:
+        print(f"[WARN] Could not read installed models: {exc}")
+        installed = []
+
+    if local_name in installed:
+        return True
+
+    print(f"[WARN] Model not installed: {local_name}")
+    should_pull = auto_pull or ask_yes_no(f"Download {local_name} now?", default=True)
+    if not should_pull:
+        return False
+
+    result = pull_model(local_name)
+    if result != 0:
+        print(f"[FAIL] Failed to pull model: {local_name}")
+        return False
+
+    return True
+
 def choose_model_interactively() -> str:
     """Ask user to choose mock or an installed Ollama model."""
     print("\nAvailable choices:")
@@ -94,8 +309,13 @@ def choose_model_interactively() -> str:
     choice = ask("Select model", "0")
 
     if choice.lower() == "m":
-        model = ask("Enter model name, e.g. llama3.2:1b or ollama:llama3.2:1b", "llama3.2:1b")
-        return normalize_model_name(model)
+        model = normalize_model_name(
+            ask("Enter model name, e.g. llama3.2:1b or ollama:llama3.2:1b", "llama3.2:1b")
+        )
+        if model != "mock" and not ensure_ollama_model_available(model):
+            print("[FAIL] Selected model is not available.")
+            return "mock"
+        return model
 
     try:
         selected_index = int(choice)
@@ -128,12 +348,17 @@ def run_wizard() -> int:
     print("\nStep 1/4: Environment check")
     env_code = run_env_check(fix=True)
     if env_code != 0:
-        continue_anyway = ask_yes_no(
-            "Environment check found issues. Continue anyway?",
-            default=True,
-        )
-        if not continue_anyway:
-            return env_code
+        if ask_yes_no("Try to install/start Ollama automatically?", default=True):
+            ensure_ollama_ready(allow_install=True)
+            env_code = run_env_check(fix=True)
+
+        if env_code != 0:
+            continue_anyway = ask_yes_no(
+                "Environment check still found issues. Continue anyway?",
+                default=False,
+            )
+            if not continue_anyway:
+                return env_code
 
     print("\nStep 2/4: Select test mode")
     print("  1. Single model")
@@ -159,6 +384,9 @@ def run_wizard() -> int:
 
     print("\nStep 3/4: Run benchmark")
     if mode == "2":
+        if not ensure_ollama_ready(allow_install=True):
+            print("[FAIL] Ollama is required for batch local model testing.")
+            return 1
         code = run_batch_benchmark(
             temperature=temperature,
             max_tokens=max_tokens,
@@ -167,6 +395,9 @@ def run_wizard() -> int:
         )
     else:
         model = "mock" if mode == "3" else choose_model_interactively()
+        if model != "mock" and not ensure_ollama_model_available(model):
+            print("[FAIL] Ollama model is not available. Benchmark skipped.")
+            return 1
         code = run_single_benchmark(
             model=model,
             temperature=temperature,
@@ -208,6 +439,7 @@ def build_parser() -> argparse.ArgumentParser:
     env.add_argument("--fix", action="store_true", help="Create missing output folders when possible.")
 
     sub.add_parser("wizard", help="Run interactive test wizard")
+    sub.add_parser("install-ollama", help="Download/install Ollama, then try to start the local API")
     sub.add_parser("list", help="List local Ollama models")
 
     pull = sub.add_parser("pull", help="Pull an Ollama model")
@@ -285,24 +517,42 @@ def main() -> int:
         return run_wizard()
 
     if args.command == "env":
-        return run_env_check(fix=args.fix)
+        code = run_env_check(fix=args.fix)
+        if code != 0 and args.fix:
+            if ask_yes_no("Try to install/start Ollama automatically?", default=True):
+                ensure_ollama_ready(allow_install=True)
+                return run_env_check(fix=args.fix)
+        return code
+
+    if args.command == "install-ollama":
+        return 0 if ensure_ollama_ready(allow_install=True) else 1
 
     if args.command == "list":
+        if not ensure_ollama_ready(allow_install=True):
+            return 1
         return list_models()
 
     if args.command == "pull":
+        if not ensure_ollama_ready(allow_install=True):
+            return 1
         return pull_model(args.model)
 
     if args.command == "show":
+        if not ensure_ollama_ready(allow_install=True):
+            return 1
         return show_model(args.model)
 
     if args.command == "stop":
+        if not ensure_ollama_ready(allow_install=False):
+            return 1
         return stop_model(args.model)
 
     if args.command == "test":
         model = normalize_model_name(args.model)
         if not args.skip_env:
             run_env_check(fix=True, require_ollama=(model != "mock"))
+        if model != "mock" and not ensure_ollama_model_available(model):
+            return 1
         return run_single_benchmark(
             model=model,
             temperature=args.temperature,
@@ -312,9 +562,8 @@ def main() -> int:
     if args.command == "run":
         model = normalize_model_name(args.model)
         run_env_check(fix=True, require_ollama=(model != "mock"))
-        if args.pull_if_missing and model.startswith("ollama:") and check_ollama_api(quiet=True):
-            local_name = model.split("ollama:", 1)[1]
-            pull_model(local_name)
+        if model != "mock" and not ensure_ollama_model_available(model, auto_pull=args.pull_if_missing):
+            return 1
         code = run_single_benchmark(
             model=model,
             temperature=args.temperature,
@@ -325,6 +574,8 @@ def main() -> int:
         return generate_reports(mode=args.report_mode)
 
     if args.command == "batch":
+        if not ensure_ollama_ready(allow_install=True):
+            return 1
         return run_batch_benchmark(
             temperature=args.temperature,
             max_tokens=args.max_tokens,
@@ -344,6 +595,8 @@ def main() -> int:
 
     if args.command == "all":
         run_env_check(fix=True)
+        if not ensure_ollama_ready(allow_install=True):
+            return 1
         return run_batch_benchmark(
             temperature=args.temperature,
             max_tokens=args.max_tokens,
