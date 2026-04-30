@@ -43,7 +43,7 @@ function Test-Ollama {
     $ollamaCmd = Get-Command ollama -ErrorAction SilentlyContinue
     if ($null -ne $ollamaCmd) { return $true }
     try {
-        $response = Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -TimeoutSec 2 -UseBasicParsing -ErrorAction SilentlyContinue
+        $response = Invoke-WebRequest -Uri "http://localhost:11434/api/tags" -UseBasicParsing -ErrorAction SilentlyContinue
         if ($response.StatusCode -eq 200) { return $true }
     }
     catch { }
@@ -83,7 +83,7 @@ function Install-Ollama {
     Write-INFO "Downloading installer..."
     try {
         $tempPath = Join-Path $env:TEMP "OllamaSetup.exe"
-        Invoke-WebRequest -Uri "https://ollama.ai/download/OllamaSetup.exe" -OutFile $tempPath -TimeoutSec 30
+        Invoke-WebRequest -Uri "https://ollama.ai/download/OllamaSetup.exe" -OutFile $tempPath
         if (Test-Path $tempPath) {
             Write-OK "Download complete"
             & $tempPath

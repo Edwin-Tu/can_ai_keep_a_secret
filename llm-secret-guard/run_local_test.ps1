@@ -1,11 +1,11 @@
 param(
     [string]$DistroName = "Ubuntu",
-    [int]$TimeoutSec = 180,
+    [int]$TimeoutSec = 0,
     [switch]$EnvOnly,
     [switch]$SkipBenchmark,
     [switch]$SkipReport,
     [double]$Temperature = 0,
-    [int]$MaxTokens = 800,
+    [int]$MaxTokens = 0,
     [switch]$Unlimited,
     [ValidateSet("public", "internal")]
     [string]$ReportMode = "public"
@@ -73,7 +73,7 @@ function Invoke-WslBash {
 
 function Test-OllamaApi {
     try {
-        Invoke-RestMethod -Uri "$BaseUrl/api/tags" -TimeoutSec 3 | Out-Null
+        Invoke-RestMethod -Uri "$BaseUrl/api/tags" | Out-Null
         return $true
     }
     catch {
@@ -258,10 +258,9 @@ function Ensure-Ollama {
 
     Invoke-WslBash $Distro 'mkdir -p ~/ollama-logs; nohup ollama serve > ~/ollama-logs/ollama.log 2>&1 &'
 
-    $start = Get-Date
     $ready = $false
 
-    while (((Get-Date) - $start).TotalSeconds -lt $TimeoutSec) {
+    while (-not $ready) {
         Start-Sleep -Seconds 2
 
         if (Test-OllamaApi) {
@@ -272,19 +271,12 @@ function Ensure-Ollama {
         Write-Host "Waiting for Ollama..."
     }
 
-    if (-not $ready) {
-        Write-Fail "Ollama did not start within timeout."
-        Write-Host "Check log:"
-        Write-Host "wsl -d $Distro -e bash -lc `"cat ~/ollama-logs/ollama.log`""
-        exit 1
-    }
-
     Write-Ok "Ollama API started."
 }
 
 function Get-LocalOllamaModels {
     try {
-        $response = Invoke-RestMethod -Uri "$BaseUrl/api/tags" -TimeoutSec 5
+        $response = Invoke-RestMethod -Uri "$BaseUrl/api/tags"
 
         if ($null -eq $response.models) {
             return @()
@@ -408,20 +400,14 @@ function Run-Benchmark {
     param([string]$ModelArg)
 
     Write-Step "Step 7: Run benchmark"
-
     Write-Host "Model: $ModelArg" -ForegroundColor Green
     Write-Host "Temperature: $Temperature" -ForegroundColor Green
 
-    if ($Unlimited) {
-        Write-Warn "Max tokens: unlimited / model default. This may cause timeout if the model does not stop naturally."
-        & python "src/run_benchmark.py" "--model" $ModelArg "--temperature" $Temperature "--unlimited"
+    if ($Unlimited -or $MaxTokens -le 0) {
+        Write-Host "Max tokens: unlimited / model default" -ForegroundColor Yellow
+        & python "src/run_benchmark.py" "--model" $ModelArg "--temperature" $Temperature
     }
     else {
-        if ($MaxTokens -le 0) {
-            Write-Warn "MaxTokens <= 0 is not treated as unlimited. Falling back to 800 for benchmark stability. Use -Unlimited for no limit."
-            $script:MaxTokens = 800
-        }
-
         Write-Host "Max tokens: $MaxTokens" -ForegroundColor Green
         & python "src/run_benchmark.py" "--model" $ModelArg "--temperature" $Temperature "--max-tokens" $MaxTokens
     }
@@ -453,7 +439,8 @@ Write-Step "LLM Secret Guard Local Test Wizard"
 
 Write-Host "Project path: $Root"
 Write-Host "This script checks environment, starts Ollama, selects model, runs benchmark, and generates report."
-Write-Host "Default benchmark output limit: 800 tokens. Use -Unlimited only for special stress tests."
+Write-Host "Default benchmark output limit: unlimited / model default. Use -MaxTokens to set a per-response limit."
+Write-Host "Ollama startup wait: no timeout when -TimeoutSec is 0."
 
 Ensure-PythonDependencies
 

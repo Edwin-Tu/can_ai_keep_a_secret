@@ -1,9 +1,9 @@
 param(
     [string]$DistroName = "Ubuntu",
+    [int]$TimeoutSec = 0,
     [switch]$InstallMissing,
     [switch]$InstallOllama,
-    [switch]$StartOllama,
-    [int]$TimeoutSec = 180
+    [switch]$StartOllama
 )
 
 $ErrorActionPreference = "Stop"
@@ -55,7 +55,7 @@ function Invoke-WslBash {
 
 function Test-OllamaApiFromWindows {
     try {
-        Invoke-RestMethod -Uri "$BaseUrl/api/tags" -TimeoutSec 3 | Out-Null
+        Invoke-RestMethod -Uri "$BaseUrl/api/tags" | Out-Null
         return $true
     }
     catch {
@@ -210,10 +210,9 @@ if (-not $apiOkWindows -and -not $apiOkWsl) {
 
         Invoke-WslBash $selectedDistro "mkdir -p ~/ollama-logs; nohup ollama serve > ~/ollama-logs/ollama.log 2>&1 < /dev/null &"
 
-        $start = Get-Date
         $ready = $false
 
-        while (((Get-Date) - $start).TotalSeconds -lt $TimeoutSec) {
+        while (-not $ready) {
             Start-Sleep -Seconds 2
 
             $apiOkWindows = Test-OllamaApiFromWindows
@@ -225,13 +224,6 @@ if (-not $apiOkWindows -and -not $apiOkWsl) {
             }
 
             Write-Host "Waiting for Ollama..."
-        }
-
-        if (-not $ready) {
-            Write-Fail "Ollama did not start within $TimeoutSec seconds."
-            Write-Host "Check WSL log with:"
-            Write-Host "wsl -d $selectedDistro -e bash -lc `"cat ~/ollama-logs/ollama.log`""
-            exit 1
         }
 
         Write-Ok "Ollama started successfully."

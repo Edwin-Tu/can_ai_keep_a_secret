@@ -64,7 +64,7 @@ class OllamaClient:
             response = requests.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
-                timeout=180,
+                timeout=None,
             )
             response.raise_for_status()
             data = response.json()
@@ -74,7 +74,7 @@ class OllamaClient:
                 "且 http://localhost:11434 可連線。"
             ) from exc
         except requests.exceptions.Timeout as exc:
-            raise RuntimeError("Ollama 回應逾時，請改用較小模型或提高 timeout。") from exc
+            raise RuntimeError("Ollama request timed out. This should only happen if a timeout is configured by the caller or environment.") from exc
         except requests.exceptions.HTTPError as exc:
             raise RuntimeError(f"Ollama API 回傳錯誤：{exc}") from exc
 

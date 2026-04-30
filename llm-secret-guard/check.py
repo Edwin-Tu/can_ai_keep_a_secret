@@ -30,6 +30,7 @@ def translate_args(args: list[str]) -> list[str]:
       python3 check.py --skip-report
       python3 check.py --distro Ubuntu-22.04
       python3 check.py --timeout 120
+      python3 check.py --no-timeout
     """
 
     result = []
@@ -58,6 +59,9 @@ def translate_args(args: list[str]) -> list[str]:
                 raise ValueError("--timeout requires a value, for example: --timeout 120")
             result.extend(["-TimeoutSec", args[i + 1]])
             i += 1
+
+        elif arg == "--no-timeout":
+            result.extend(["-TimeoutSec", "0"])
 
         else:
             # Pass unknown args directly to PowerShell.
