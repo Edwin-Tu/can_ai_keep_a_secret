@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from automation.benchmark_runner import run_single_benchmark, run_batch_benchmark
-from automation.ollama_tools import get_installed_models
-from automation.report_runner import generate_reports
+from .benchmark_runner import run_single_benchmark, run_batch_benchmark
+from .ollama_tools import get_installed_models
+from .report_runner import generate_reports
 
 
 def _normalize_model(model: str) -> str:

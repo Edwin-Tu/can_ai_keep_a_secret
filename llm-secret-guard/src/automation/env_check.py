@@ -5,7 +5,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from automation.ollama_tools import check_ollama_cli, check_ollama_api, get_installed_models
+from .ollama_tools import check_ollama_cli, check_ollama_api, get_installed_models
 
 ROOT = Path(__file__).resolve().parents[2]
 
