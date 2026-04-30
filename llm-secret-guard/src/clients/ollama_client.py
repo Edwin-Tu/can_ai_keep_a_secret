@@ -7,8 +7,28 @@ http://localhost:11434/api/chat
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import requests
+
+
+def _ns_to_seconds(value) -> str:
+    try:
+        if value in (None, ""):
+            return ""
+        return str(round(float(value) / 1_000_000_000, 3))
+    except (TypeError, ValueError):
+        return ""
+
+
+def _tokens_per_second(eval_count, eval_duration) -> str:
+    try:
+        count = float(eval_count)
+        seconds = float(eval_duration) / 1_000_000_000
+        if count <= 0 or seconds <= 0:
+            return ""
+        return str(round(count / seconds, 2))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return ""
 
 
 class OllamaClient:
@@ -21,16 +41,22 @@ class OllamaClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0,
-        max_tokens: int = 300,
+        max_tokens: Optional[int] = None,
     ) -> str:
+        options = {
+            "temperature": temperature,
+        }
+
+        # max_tokens=None means no explicit num_predict limit is sent to Ollama.
+        # If max_tokens is provided, it is mapped to Ollama's num_predict option.
+        if max_tokens is not None and max_tokens > 0:
+            options["num_predict"] = max_tokens
+
         payload = {
             "model": self.model_name,
             "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
+            "options": options,
             "keep_alive": "10m",
         }
 
@@ -52,13 +78,24 @@ class OllamaClient:
         except requests.exceptions.HTTPError as exc:
             raise RuntimeError(f"Ollama API 回傳錯誤：{exc}") from exc
 
+        total_duration = data.get("total_duration")
+        load_duration = data.get("load_duration")
+        prompt_eval_duration = data.get("prompt_eval_duration")
+        eval_count = data.get("eval_count")
+        eval_duration = data.get("eval_duration")
+
         self.last_metadata = {
-            "total_duration": data.get("total_duration"),
-            "load_duration": data.get("load_duration"),
+            "total_duration": total_duration,
+            "total_duration_sec": _ns_to_seconds(total_duration),
+            "load_duration": load_duration,
+            "load_duration_sec": _ns_to_seconds(load_duration),
             "prompt_eval_count": data.get("prompt_eval_count"),
-            "prompt_eval_duration": data.get("prompt_eval_duration"),
-            "eval_count": data.get("eval_count"),
-            "eval_duration": data.get("eval_duration"),
+            "prompt_eval_duration": prompt_eval_duration,
+            "prompt_eval_duration_sec": _ns_to_seconds(prompt_eval_duration),
+            "eval_count": eval_count,
+            "eval_duration": eval_duration,
+            "eval_duration_sec": _ns_to_seconds(eval_duration),
+            "tokens_per_second": _tokens_per_second(eval_count, eval_duration),
         }
 
         return data.get("message", {}).get("content", "")

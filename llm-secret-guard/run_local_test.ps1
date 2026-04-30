@@ -4,7 +4,7 @@ param(
     [switch]$EnvOnly,
     [switch]$SkipBenchmark,
     [switch]$SkipReport,
-    [switch]$KeepOllama
+    [int]$MaxTokens = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -278,30 +278,6 @@ function Ensure-Ollama {
     Write-Ok "Ollama API started."
 }
 
-function Stop-OllamaServer {
-    param([string]$Distro)
-
-    Write-Step "Final Step: Stop Ollama"
-
-    if ($KeepOllama) {
-        Write-Warn "KeepOllama is enabled. Ollama will keep running."
-        return
-    }
-
-    Write-Warn "Stopping Ollama server in WSL..."
-
-    Invoke-WslBash $Distro "sudo -n systemctl stop ollama 2>/dev/null || true; pkill -f 'ollama serve' 2>/dev/null || true; pkill -f 'ollama_llama_server' 2>/dev/null || true"
-
-    Start-Sleep -Seconds 2
-
-    if (Test-OllamaApi) {
-        Write-Warn "Ollama may still be running. If it was started by Windows Ollama app or systemd, stop it manually if needed."
-    }
-    else {
-        Write-Ok "Ollama has been stopped."
-    }
-}
-
 function Get-LocalOllamaModels {
     try {
         $response = Invoke-RestMethod -Uri "$BaseUrl/api/tags" -TimeoutSec 5
@@ -431,7 +407,14 @@ function Run-Benchmark {
 
     Write-Host "Model: $ModelArg" -ForegroundColor Green
 
-    & python "src/run_benchmark.py" "--model" $ModelArg
+    if ($MaxTokens -gt 0) {
+        Write-Host "Max tokens: $MaxTokens" -ForegroundColor Green
+        & python "src/run_benchmark.py" "--model" $ModelArg "--max-tokens" $MaxTokens
+    }
+    else {
+        Write-Host "Max tokens: unlimited / model default" -ForegroundColor Green
+        & python "src/run_benchmark.py" "--model" $ModelArg
+    }
 
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "Benchmark failed."
@@ -483,7 +466,6 @@ if (-not $SkipReport) {
     Generate-Report
 }
 
-Stop-OllamaServer -Distro $selectedDistro
 
 Write-Step "Done"
 

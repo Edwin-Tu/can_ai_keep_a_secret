@@ -1,8 +1,17 @@
 import argparse
 import csv
+import hashlib
 import json
+import os
+import platform
+import re
+import socket
+import subprocess
+import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from model_client import get_client
 from leak_detector import detect_leak
@@ -10,30 +19,167 @@ from scoring import level_to_score, calculate_total_score
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BENCHMARK_VERSION = "0.3.0"
 
 
 def safe_filename(name: str) -> str:
-    """
-    將檔名轉換為安全格式，移除 Windows 不允許的字符。
-    
-    Args:
-        name: 原始檔名
-        
-    Returns:
-        安全的檔名
-    """
+    """Convert a model name into a Windows-safe filename."""
     return (
         name.replace(":", "_")
-            .replace("/", "_")
-            .replace("\\", "_")
-            .replace(" ", "_")
-            .replace("|", "_")
-            .replace("<", "_")
-            .replace(">", "_")
-            .replace("?", "_")
-            .replace("*", "_")
-            .replace('"', "_")
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(" ", "_")
+        .replace("|", "_")
+        .replace("<", "_")
+        .replace(">", "_")
+        .replace("?", "_")
+        .replace("*", "_")
+        .replace('"', "_")
     )
+
+
+def get_provider(model_name: str) -> str:
+    if model_name.startswith("ollama:"):
+        return "ollama"
+    if ":" in model_name:
+        return model_name.split(":", 1)[0]
+    return model_name
+
+
+def get_commit_hash() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        value = result.stdout.strip()
+        return value if result.returncode == 0 and value else "N/A"
+    except Exception:
+        return "N/A"
+
+
+def run_command(command: list[str], timeout: int = 10) -> str:
+    """Run a local command and return stdout/stderr, or N/A if unavailable."""
+    try:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception:
+        return "N/A"
+
+    output = (result.stdout or result.stderr or "").strip()
+    return output if result.returncode == 0 and output else "N/A"
+
+
+def get_ram_gb() -> str:
+    """Return system RAM in GB without requiring third-party dependencies."""
+    try:
+        import psutil  # type: ignore
+
+        return str(round(psutil.virtual_memory().total / (1024 ** 3), 2))
+    except Exception:
+        pass
+
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = MEMORYSTATUSEX()
+            status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            return str(round(status.ullTotalPhys / (1024 ** 3), 2))
+        except Exception:
+            return "N/A"
+
+    try:
+        pages = os.sysconf("SC_PHYS_PAGES")
+        page_size = os.sysconf("SC_PAGE_SIZE")
+        return str(round(pages * page_size / (1024 ** 3), 2))
+    except Exception:
+        return "N/A"
+
+
+def get_ollama_model_name(model_name: str) -> str:
+    if model_name.startswith("ollama:"):
+        return model_name.split("ollama:", 1)[1]
+    return model_name
+
+
+def get_ollama_version(provider: str) -> str:
+    if provider != "ollama":
+        return "N/A"
+    return run_command(["ollama", "--version"])
+
+
+def get_ollama_model_id(model_name: str, provider: str) -> str:
+    """Best-effort extraction of the Ollama model ID/digest from `ollama list`."""
+    if provider != "ollama":
+        return "N/A"
+
+    local_model = get_ollama_model_name(model_name)
+    output = run_command(["ollama", "list"])
+    if output == "N/A":
+        return "N/A"
+
+    for line in output.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == local_model:
+            return parts[1]
+
+    for line in output.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and local_model in parts[0]:
+            return parts[1]
+
+    return "N/A"
+
+
+def ns_to_seconds(value) -> str:
+    try:
+        if value in (None, ""):
+            return ""
+        return str(round(float(value) / 1_000_000_000, 3))
+    except (TypeError, ValueError):
+        return ""
+
+
+def tokens_per_second(eval_count, eval_duration) -> str:
+    try:
+        count = float(eval_count)
+        seconds = float(eval_duration) / 1_000_000_000
+        if count <= 0 or seconds <= 0:
+            return ""
+        return str(round(count / seconds, 2))
+    except (TypeError, ValueError, ZeroDivisionError):
+        return ""
+
+
+def file_sha256_short(path: Path, length: int = 12) -> str:
+    if not path.exists():
+        return "N/A"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    return digest[:length]
 
 
 def load_flag() -> str:
@@ -49,41 +195,123 @@ def load_attacks() -> list[dict]:
     return json.loads((ROOT / "attacks" / "attacks.json").read_text(encoding="utf-8"))
 
 
-def run_attack(client, model_name: str, system_prompt: str, flag: str, attack: dict, temperature: float, max_tokens: int) -> list[dict]:
+def normalize_max_tokens(value: Optional[int]) -> Optional[int]:
+    if value is None or value <= 0:
+        return None
+    return value
+
+
+def get_client_metadata(client) -> dict:
+    metadata = getattr(client, "last_metadata", {}) or {}
+    eval_count = metadata.get("eval_count", "")
+    eval_duration = metadata.get("eval_duration", "")
+    total_duration = metadata.get("total_duration", "")
+    load_duration = metadata.get("load_duration", "")
+    prompt_eval_duration = metadata.get("prompt_eval_duration", "")
+
+    return {
+        "total_duration": total_duration,
+        "total_duration_sec": metadata.get("total_duration_sec") or ns_to_seconds(total_duration),
+        "load_duration": load_duration,
+        "load_duration_sec": metadata.get("load_duration_sec") or ns_to_seconds(load_duration),
+        "prompt_eval_count": metadata.get("prompt_eval_count", ""),
+        "prompt_eval_duration": prompt_eval_duration,
+        "prompt_eval_duration_sec": metadata.get("prompt_eval_duration_sec") or ns_to_seconds(prompt_eval_duration),
+        "eval_count": eval_count,
+        "eval_duration": eval_duration,
+        "eval_duration_sec": metadata.get("eval_duration_sec") or ns_to_seconds(eval_duration),
+        "tokens_per_second": metadata.get("tokens_per_second") or tokens_per_second(eval_count, eval_duration),
+    }
+
+
+def run_attack(
+    client,
+    model_name: str,
+    system_prompt: str,
+    flag: str,
+    attack: dict,
+    temperature: float,
+    max_tokens: Optional[int],
+    run_metadata: dict,
+    attack_index: int,
+    total_attacks: int,
+) -> list[dict]:
     """
-    單輪：每題獨立 session。
-    多輪：只在同一題內保留上下文，且固定依照 attacks.json 的 turns 執行。
+    Single-turn: each attack starts a fresh session.
+    Multi-turn: context is preserved only inside the same attack.
+
+    max_tokens=None means no explicit output token limit is sent to the client.
     """
     rows = []
     messages = [{"role": "system", "content": system_prompt}]
+    turns = attack["turns"]
+    total_turns = len(turns)
 
-    for turn_index, turn in enumerate(attack["turns"], start=1):
+    for turn_index, turn in enumerate(turns, start=1):
+        print(
+            f"[{attack_index}/{total_attacks}] "
+            f"{attack['id']} turn {turn_index}/{total_turns}: sending prompt...",
+            flush=True,
+        )
+
         messages.append(turn)
 
-        response = client.generate(messages, temperature=temperature, max_tokens=max_tokens)
+        if max_tokens is None:
+            response = client.generate(messages, temperature=temperature)
+        else:
+            response = client.generate(messages, temperature=temperature, max_tokens=max_tokens)
+
         messages.append({"role": "assistant", "content": response})
 
         leak = detect_leak(response, flag)
+        score = level_to_score(leak.leak_level)
+        client_metadata = get_client_metadata(client)
 
-        rows.append({
+        print(
+            f"[{attack_index}/{total_attacks}] "
+            f"{attack['id']} turn {turn_index}/{total_turns}: "
+            f"done, leak_level={leak.leak_level}, score={score}",
+            flush=True,
+        )
+
+        row = {
             "time": datetime.now().isoformat(timespec="seconds"),
+            "run_id": run_metadata["run_id"],
             "model": model_name,
+            "provider": run_metadata["provider"],
+            "temperature": temperature,
+            "max_tokens": run_metadata["max_tokens_label"],
+            "benchmark_version": run_metadata["benchmark_version"],
+            "attack_set_version": run_metadata["attack_set_version"],
+            "commit_hash": run_metadata["commit_hash"],
+            "host_name": run_metadata["host_name"],
+            "python_version": run_metadata["python_version"],
+            "platform": run_metadata["platform"],
+            "os_version": run_metadata["os_version"],
+            "machine": run_metadata["machine"],
+            "processor": run_metadata["processor"],
+            "cpu_count": run_metadata["cpu_count"],
+            "ram_gb": run_metadata["ram_gb"],
+            "ollama_version": run_metadata["ollama_version"],
+            "ollama_model_id": run_metadata["ollama_model_id"],
             "attack_id": attack["id"],
             "mode": attack.get("mode", "single_turn"),
             "category": attack.get("category", ""),
             "turn_index": turn_index,
             "prompt": turn["content"],
             "response": response,
+            "response_chars": len(response),
             "leak_level": leak.leak_level,
-            "score": level_to_score(leak.leak_level),
+            "score": score,
             "result": leak.result,
             "format_violation": leak.format_violation,
             "reasons": " | ".join(leak.reasons),
-            "description": attack.get("description", "")
-        })
+            "description": attack.get("description", ""),
+        }
+        row.update(client_metadata)
+        rows.append(row)
 
-        # 第一版可選：若完整洩漏，可停止該題。
-        # 為保持完全一致，預設不 early stop。
+        # Keep all attacks fully comparable. Do not early stop by default.
         # if leak.leak_level == 4:
         #     break
 
@@ -91,20 +319,72 @@ def run_attack(client, model_name: str, system_prompt: str, flag: str, attack: d
 
 
 def main():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description="Run LLM Secret Guard benchmark")
     parser.add_argument("--model", default="mock", help="mock / ollama:<model_name>")
     parser.add_argument("--temperature", type=float, default=0)
-    parser.add_argument("--max-tokens", type=int, default=300)
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help=(
+            "Optional maximum output tokens per model response. "
+            "If omitted or <= 0, no explicit output token limit is sent to the model client."
+        ),
+    )
     args = parser.parse_args()
+    args.max_tokens = normalize_max_tokens(args.max_tokens)
 
     flag = load_flag()
     system_prompt = load_system_prompt(flag)
     attacks = load_attacks()
     client = get_client(args.model)
 
+    max_tokens_label = str(args.max_tokens) if args.max_tokens is not None else "unlimited / model default"
+    provider = get_provider(args.model)
+    run_metadata = {
+        "run_id": uuid.uuid4().hex[:12],
+        "provider": provider,
+        "max_tokens_label": max_tokens_label,
+        "benchmark_version": BENCHMARK_VERSION,
+        "attack_set_version": file_sha256_short(ROOT / "attacks" / "attacks.json"),
+        "commit_hash": get_commit_hash(),
+        "host_name": socket.gethostname(),
+        "python_version": sys.version.split()[0],
+        "platform": platform.platform(),
+        "os_version": platform.platform(),
+        "machine": platform.machine() or "N/A",
+        "processor": platform.processor() or "N/A",
+        "cpu_count": os.cpu_count() or "N/A",
+        "ram_gb": get_ram_gb(),
+        "ollama_version": get_ollama_version(provider),
+        "ollama_model_id": get_ollama_model_id(args.model, provider),
+    }
+
+    print("==================================================", flush=True)
+    print("Run benchmark", flush=True)
+    print("==================================================", flush=True)
+    print(f"Run ID: {run_metadata['run_id']}", flush=True)
+    print(f"Model: {args.model}", flush=True)
+    print(f"Provider: {run_metadata['provider']}", flush=True)
+    print(f"Temperature: {args.temperature}", flush=True)
+    print(f"Max tokens: {max_tokens_label}", flush=True)
+    print(f"Benchmark version: {BENCHMARK_VERSION}", flush=True)
+    print(f"Attack set version: {run_metadata['attack_set_version']}", flush=True)
+    print(f"Ollama version: {run_metadata['ollama_version']}", flush=True)
+    print(f"Ollama model ID: {run_metadata['ollama_model_id']}", flush=True)
+    print(f"Host: {run_metadata['host_name']}", flush=True)
+    print(f"Total attacks: {len(attacks)}", flush=True)
+    print("==================================================", flush=True)
+
     all_rows = []
 
-    for attack in attacks:
+    for attack_index, attack in enumerate(attacks, start=1):
+        print(
+            f"[{attack_index}/{len(attacks)}] "
+            f"Running {attack['id']} - {attack.get('category', '')}",
+            flush=True,
+        )
+
         rows = run_attack(
             client=client,
             model_name=args.model,
@@ -113,8 +393,16 @@ def main():
             attack=attack,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
+            run_metadata=run_metadata,
+            attack_index=attack_index,
+            total_attacks=len(attacks),
         )
         all_rows.extend(rows)
+
+        print(f"[{attack_index}/{len(attacks)}] Done {attack['id']}", flush=True)
+
+    if not all_rows:
+        raise RuntimeError("No benchmark rows were generated. Please check attacks/attacks.json.")
 
     output_path = ROOT / "results" / f"results_{safe_filename(args.model)}.csv"
     output_path.parent.mkdir(exist_ok=True)
@@ -126,8 +414,10 @@ def main():
 
     total_score = calculate_total_score(all_rows)
 
-    print(f"測試完成：{output_path}")
-    print(f"Secret Protection Score: {total_score}")
+    print("==================================================", flush=True)
+    print(f"Benchmark completed: {output_path}", flush=True)
+    print(f"Secret Protection Score: {total_score}", flush=True)
+    print("==================================================", flush=True)
 
 
 if __name__ == "__main__":
