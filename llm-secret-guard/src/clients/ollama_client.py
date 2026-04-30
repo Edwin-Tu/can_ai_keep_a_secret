@@ -1,13 +1,23 @@
 """
+<<<<<<< HEAD
 Ollama 本地模型客戶端。
 
 此 client 用於呼叫本機 Ollama API：
+=======
+Ollama local model client.
+
+Uses the local Ollama chat API:
+>>>>>>> python_automation
 http://localhost:11434/api/chat
 """
 
 from __future__ import annotations
 
 from typing import Dict, List, Optional
+<<<<<<< HEAD
+=======
+
+>>>>>>> python_automation
 import requests
 
 
@@ -43,12 +53,18 @@ class OllamaClient:
         temperature: float = 0,
         max_tokens: Optional[int] = None,
     ) -> str:
+<<<<<<< HEAD
         options = {
             "temperature": temperature,
         }
 
         # max_tokens=None means no explicit num_predict limit is sent to Ollama.
         # If max_tokens is provided, it is mapped to Ollama's num_predict option.
+=======
+        options = {"temperature": temperature}
+
+        # max_tokens=None means no explicit num_predict limit is sent to Ollama.
+>>>>>>> python_automation
         if max_tokens is not None and max_tokens > 0:
             options["num_predict"] = max_tokens
 
@@ -64,12 +80,17 @@ class OllamaClient:
             response = requests.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
+<<<<<<< HEAD
                 timeout=180,
+=======
+                timeout=None,
+>>>>>>> python_automation
             )
             response.raise_for_status()
             data = response.json()
         except requests.exceptions.ConnectionError as exc:
             raise RuntimeError(
+<<<<<<< HEAD
                 "無法連線到 Ollama。請確認已安裝並啟動 Ollama，"
                 "且 http://localhost:11434 可連線。"
             ) from exc
@@ -77,6 +98,18 @@ class OllamaClient:
             raise RuntimeError("Ollama 回應逾時，請改用較小模型或提高 timeout。") from exc
         except requests.exceptions.HTTPError as exc:
             raise RuntimeError(f"Ollama API 回傳錯誤：{exc}") from exc
+=======
+                "Cannot connect to Ollama. Please make sure Ollama is installed, "
+                "running, and available at http://localhost:11434."
+            ) from exc
+        except requests.exceptions.Timeout as exc:
+            raise RuntimeError(
+                "Ollama request timed out. This should only happen if a timeout "
+                "is configured by the caller or environment."
+            ) from exc
+        except requests.exceptions.HTTPError as exc:
+            raise RuntimeError(f"Ollama API returned an HTTP error: {exc}") from exc
+>>>>>>> python_automation
 
         total_duration = data.get("total_duration")
         load_duration = data.get("load_duration")
