@@ -6,10 +6,6 @@ import hashlib
 import json
 import os
 import platform
-<<<<<<< HEAD
-import re
-=======
->>>>>>> python_automation
 import socket
 import subprocess
 import sys
@@ -24,18 +20,10 @@ from scoring import level_to_score, calculate_total_score
 
 
 ROOT = Path(__file__).resolve().parents[1]
-<<<<<<< HEAD
-BENCHMARK_VERSION = "0.3.0"
-
-
-def safe_filename(name: str) -> str:
-    """Convert a model name into a Windows-safe filename."""
-=======
 BENCHMARK_VERSION = "0.4.0-python-automation"
 
 
 def safe_filename(name: str) -> str:
->>>>>>> python_automation
     return (
         name.replace(":", "_")
         .replace("/", "_")
@@ -58,27 +46,7 @@ def get_provider(model_name: str) -> str:
     return model_name
 
 
-<<<<<<< HEAD
-def get_commit_hash() -> str:
-    try:
-        result = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        value = result.stdout.strip()
-        return value if result.returncode == 0 and value else "N/A"
-    except Exception:
-        return "N/A"
-
-
 def run_command(command: list[str], timeout: int = 10) -> str:
-    """Run a local command and return stdout/stderr, or N/A if unavailable."""
-=======
-def run_command(command: list[str], timeout: int = 10) -> str:
->>>>>>> python_automation
     try:
         result = subprocess.run(
             command,
@@ -95,14 +63,6 @@ def run_command(command: list[str], timeout: int = 10) -> str:
     return output if result.returncode == 0 and output else "N/A"
 
 
-<<<<<<< HEAD
-def get_ram_gb() -> str:
-    """Return system RAM in GB without requiring third-party dependencies."""
-    try:
-        import psutil  # type: ignore
-
-        return str(round(psutil.virtual_memory().total / (1024 ** 3), 2))
-=======
 def get_commit_hash() -> str:
     return run_command(["git", "rev-parse", "--short", "HEAD"])
 
@@ -117,7 +77,6 @@ def get_ram_gb() -> str:
     try:
         import psutil  # type: ignore
         return str(round(psutil.virtual_memory().total / (1024**3), 2))
->>>>>>> python_automation
     except Exception:
         pass
 
@@ -141,34 +100,20 @@ def get_ram_gb() -> str:
             status = MEMORYSTATUSEX()
             status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
             ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
-<<<<<<< HEAD
-            return str(round(status.ullTotalPhys / (1024 ** 3), 2))
-=======
             return str(round(status.ullTotalPhys / (1024**3), 2))
->>>>>>> python_automation
         except Exception:
             return "N/A"
 
     try:
         pages = os.sysconf("SC_PHYS_PAGES")
         page_size = os.sysconf("SC_PAGE_SIZE")
-<<<<<<< HEAD
-        return str(round(pages * page_size / (1024 ** 3), 2))
-=======
         return str(round(pages * page_size / (1024**3), 2))
->>>>>>> python_automation
     except Exception:
         return "N/A"
 
 
 def get_ollama_model_name(model_name: str) -> str:
-<<<<<<< HEAD
-    if model_name.startswith("ollama:"):
-        return model_name.split("ollama:", 1)[1]
-    return model_name
-=======
     return model_name.split("ollama:", 1)[1] if model_name.startswith("ollama:") else model_name
->>>>>>> python_automation
 
 
 def get_ollama_version(provider: str) -> str:
@@ -178,19 +123,11 @@ def get_ollama_version(provider: str) -> str:
 
 
 def get_ollama_model_id(model_name: str, provider: str) -> str:
-<<<<<<< HEAD
-    """Best-effort extraction of the Ollama model ID/digest from `ollama list`."""
-=======
->>>>>>> python_automation
     if provider != "ollama":
         return "N/A"
 
     local_model = get_ollama_model_name(model_name)
     output = run_command(["ollama", "list"])
-<<<<<<< HEAD
-=======
-
->>>>>>> python_automation
     if output == "N/A":
         return "N/A"
 
@@ -207,36 +144,6 @@ def get_ollama_model_id(model_name: str, provider: str) -> str:
     return "N/A"
 
 
-<<<<<<< HEAD
-def ns_to_seconds(value) -> str:
-    try:
-        if value in (None, ""):
-            return ""
-        return str(round(float(value) / 1_000_000_000, 3))
-    except (TypeError, ValueError):
-        return ""
-
-
-def tokens_per_second(eval_count, eval_duration) -> str:
-    try:
-        count = float(eval_count)
-        seconds = float(eval_duration) / 1_000_000_000
-        if count <= 0 or seconds <= 0:
-            return ""
-        return str(round(count / seconds, 2))
-    except (TypeError, ValueError, ZeroDivisionError):
-        return ""
-
-
-def file_sha256_short(path: Path, length: int = 12) -> str:
-    if not path.exists():
-        return "N/A"
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return digest[:length]
-
-
-=======
->>>>>>> python_automation
 def load_flag() -> str:
     return (ROOT / "data" / "protected_data.txt").read_text(encoding="utf-8").strip()
 
@@ -258,26 +165,6 @@ def normalize_max_tokens(value: Optional[int]) -> Optional[int]:
 
 def get_client_metadata(client) -> dict:
     metadata = getattr(client, "last_metadata", {}) or {}
-<<<<<<< HEAD
-    eval_count = metadata.get("eval_count", "")
-    eval_duration = metadata.get("eval_duration", "")
-    total_duration = metadata.get("total_duration", "")
-    load_duration = metadata.get("load_duration", "")
-    prompt_eval_duration = metadata.get("prompt_eval_duration", "")
-
-    return {
-        "total_duration": total_duration,
-        "total_duration_sec": metadata.get("total_duration_sec") or ns_to_seconds(total_duration),
-        "load_duration": load_duration,
-        "load_duration_sec": metadata.get("load_duration_sec") or ns_to_seconds(load_duration),
-        "prompt_eval_count": metadata.get("prompt_eval_count", ""),
-        "prompt_eval_duration": prompt_eval_duration,
-        "prompt_eval_duration_sec": metadata.get("prompt_eval_duration_sec") or ns_to_seconds(prompt_eval_duration),
-        "eval_count": eval_count,
-        "eval_duration": eval_duration,
-        "eval_duration_sec": metadata.get("eval_duration_sec") or ns_to_seconds(eval_duration),
-        "tokens_per_second": metadata.get("tokens_per_second") or tokens_per_second(eval_count, eval_duration),
-=======
     return {
         "total_duration": metadata.get("total_duration", ""),
         "total_duration_sec": metadata.get("total_duration_sec", ""),
@@ -290,7 +177,6 @@ def get_client_metadata(client) -> dict:
         "eval_duration": metadata.get("eval_duration", ""),
         "eval_duration_sec": metadata.get("eval_duration_sec", ""),
         "tokens_per_second": metadata.get("tokens_per_second", ""),
->>>>>>> python_automation
     }
 
 
@@ -306,15 +192,6 @@ def run_attack(
     attack_index: int,
     total_attacks: int,
 ) -> list[dict]:
-<<<<<<< HEAD
-    """
-    Single-turn: each attack starts a fresh session.
-    Multi-turn: context is preserved only inside the same attack.
-
-    max_tokens=None means no explicit output token limit is sent to the client.
-    """
-=======
->>>>>>> python_automation
     rows = []
     messages = [{"role": "system", "content": system_prompt}]
     turns = attack["turns"]
@@ -383,22 +260,11 @@ def run_attack(
         }
         row.update(client_metadata)
         rows.append(row)
-<<<<<<< HEAD
-
-        # Keep all attacks fully comparable. Do not early stop by default.
-        # if leak.leak_level == 4:
-        #     break
-=======
->>>>>>> python_automation
 
     return rows
 
 
-<<<<<<< HEAD
-def main():
-=======
 def main() -> None:
->>>>>>> python_automation
     parser = argparse.ArgumentParser(description="Run LLM Secret Guard benchmark")
     parser.add_argument("--model", default="mock", help="mock / ollama:<model_name>")
     parser.add_argument("--temperature", type=float, default=0)
@@ -406,14 +272,7 @@ def main() -> None:
         "--max-tokens",
         type=int,
         default=None,
-<<<<<<< HEAD
-        help=(
-            "Optional maximum output tokens per model response. "
-            "If omitted or <= 0, no explicit output token limit is sent to the model client."
-        ),
-=======
         help="Optional per-response token limit. Omit or <=0 for unlimited/model default.",
->>>>>>> python_automation
     )
     args = parser.parse_args()
     args.max_tokens = normalize_max_tokens(args.max_tokens)
@@ -425,10 +284,6 @@ def main() -> None:
 
     max_tokens_label = str(args.max_tokens) if args.max_tokens is not None else "unlimited / model default"
     provider = get_provider(args.model)
-<<<<<<< HEAD
-=======
-
->>>>>>> python_automation
     run_metadata = {
         "run_id": uuid.uuid4().hex[:12],
         "provider": provider,
@@ -448,23 +303,6 @@ def main() -> None:
         "ollama_model_id": get_ollama_model_id(args.model, provider),
     }
 
-<<<<<<< HEAD
-    print("==================================================", flush=True)
-    print("Run benchmark", flush=True)
-    print("==================================================", flush=True)
-    print(f"Run ID: {run_metadata['run_id']}", flush=True)
-    print(f"Model: {args.model}", flush=True)
-    print(f"Provider: {run_metadata['provider']}", flush=True)
-    print(f"Temperature: {args.temperature}", flush=True)
-    print(f"Max tokens: {max_tokens_label}", flush=True)
-    print(f"Benchmark version: {BENCHMARK_VERSION}", flush=True)
-    print(f"Attack set version: {run_metadata['attack_set_version']}", flush=True)
-    print(f"Ollama version: {run_metadata['ollama_version']}", flush=True)
-    print(f"Ollama model ID: {run_metadata['ollama_model_id']}", flush=True)
-    print(f"Host: {run_metadata['host_name']}", flush=True)
-    print(f"Total attacks: {len(attacks)}", flush=True)
-    print("==================================================", flush=True)
-=======
     print("=" * 72, flush=True)
     print("Run benchmark", flush=True)
     print("=" * 72, flush=True)
@@ -475,7 +313,6 @@ def main() -> None:
     print(f"Max tokens: {max_tokens_label}", flush=True)
     print(f"Total attacks: {len(attacks)}", flush=True)
     print("=" * 72, flush=True)
->>>>>>> python_automation
 
     all_rows = []
 
@@ -485,10 +322,6 @@ def main() -> None:
             f"Running {attack['id']} - {attack.get('category', '')}",
             flush=True,
         )
-<<<<<<< HEAD
-
-=======
->>>>>>> python_automation
         rows = run_attack(
             client=client,
             model_name=args.model,
@@ -522,17 +355,10 @@ def main() -> None:
 
     total_score = calculate_total_score(all_rows)
 
-<<<<<<< HEAD
-    print("==================================================", flush=True)
-    print(f"Benchmark completed: {output_path}", flush=True)
-    print(f"Secret Protection Score: {total_score}", flush=True)
-    print("==================================================", flush=True)
-=======
     print("=" * 72, flush=True)
     print(f"Benchmark completed: {output_path}", flush=True)
     print(f"Secret Protection Score: {total_score}", flush=True)
     print("=" * 72, flush=True)
->>>>>>> python_automation
 
 
 if __name__ == "__main__":
