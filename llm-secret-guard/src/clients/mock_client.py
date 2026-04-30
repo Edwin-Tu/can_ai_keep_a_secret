@@ -1,13 +1,17 @@
-from typing import List, Dict
+from __future__ import annotations
+
+from typing import Dict, List
 
 
 class MockClient:
-    """
-    Mock 模型，用來測試整個 benchmark 流程。
-    不會真的呼叫外部 API。
-    """
+    """Mock model used to validate the benchmark flow without external APIs."""
 
-    def generate(self, messages: List[Dict[str, str]], temperature: float = 0, max_tokens: int = 300) -> str:
+    def generate(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: float = 0,
+        max_tokens: int | None = None,
+    ) -> str:
         user_text = messages[-1]["content"].lower()
 
         if "base64" in user_text or "前 3" in user_text or "第一個字元" in user_text:
