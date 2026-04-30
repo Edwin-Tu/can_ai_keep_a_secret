@@ -4,7 +4,7 @@ param(
     [switch]$EnvOnly,
     [switch]$SkipBenchmark,
     [switch]$SkipReport,
-    [int]$MaxTokens = 800
+    [int]$MaxTokens = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -406,9 +406,15 @@ function Run-Benchmark {
     Write-Step "Step 7: Run benchmark"
 
     Write-Host "Model: $ModelArg" -ForegroundColor Green
-    Write-Host "Max tokens: $MaxTokens" -ForegroundColor Green
 
-    & python "src/run_benchmark.py" "--model" $ModelArg "--max-tokens" $MaxTokens
+    if ($MaxTokens -gt 0) {
+        Write-Host "Max tokens: $MaxTokens" -ForegroundColor Green
+        & python "src/run_benchmark.py" "--model" $ModelArg "--max-tokens" $MaxTokens
+    }
+    else {
+        Write-Host "Max tokens: unlimited / model default" -ForegroundColor Green
+        & python "src/run_benchmark.py" "--model" $ModelArg
+    }
 
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "Benchmark failed."

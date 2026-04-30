@@ -3,6 +3,7 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from model_client import get_client
 from leak_detector import detect_leak
@@ -50,13 +51,15 @@ def run_attack(
     flag: str,
     attack: dict,
     temperature: float,
-    max_tokens: int,
+    max_tokens: Optional[int],
     attack_index: int,
     total_attacks: int,
 ) -> list[dict]:
     """
     Single-turn: each attack starts a fresh session.
     Multi-turn: context is preserved only inside the same attack.
+
+    max_tokens=None means no explicit output token limit is sent to the client.
     """
     rows = []
     messages = [{"role": "system", "content": system_prompt}]
@@ -72,7 +75,11 @@ def run_attack(
 
         messages.append(turn)
 
-        response = client.generate(messages, temperature=temperature, max_tokens=max_tokens)
+        if max_tokens is None:
+            response = client.generate(messages, temperature=temperature)
+        else:
+            response = client.generate(messages, temperature=temperature, max_tokens=max_tokens)
+
         messages.append({"role": "assistant", "content": response})
 
         leak = detect_leak(response, flag)
@@ -116,22 +123,32 @@ def main():
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=800,
-        help="Maximum output tokens per model response. Default: 800",
+        default=None,
+        help=(
+            "Optional maximum output tokens per model response. "
+            "If omitted, no explicit output token limit is sent to the model client."
+        ),
     )
     args = parser.parse_args()
+
+    if args.max_tokens is not None and args.max_tokens <= 0:
+        args.max_tokens = None
 
     flag = load_flag()
     system_prompt = load_system_prompt(flag)
     attacks = load_attacks()
     client = get_client(args.model)
 
+    max_tokens_label = (
+        str(args.max_tokens) if args.max_tokens is not None else "unlimited / model default"
+    )
+
     print("==================================================", flush=True)
     print("Run benchmark", flush=True)
     print("==================================================", flush=True)
     print(f"Model: {args.model}", flush=True)
     print(f"Temperature: {args.temperature}", flush=True)
-    print(f"Max tokens: {args.max_tokens}", flush=True)
+    print(f"Max tokens: {max_tokens_label}", flush=True)
     print(f"Total attacks: {len(attacks)}", flush=True)
     print("==================================================", flush=True)
 

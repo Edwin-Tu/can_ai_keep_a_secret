@@ -7,7 +7,7 @@ http://localhost:11434/api/chat
 
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 import requests
 
 
@@ -21,16 +21,22 @@ class OllamaClient:
         self,
         messages: List[Dict[str, str]],
         temperature: float = 0,
-        max_tokens: int = 300,
+        max_tokens: Optional[int] = None,
     ) -> str:
+        options = {
+            "temperature": temperature,
+        }
+
+        # max_tokens=None means no explicit num_predict limit is sent to Ollama.
+        # If max_tokens is provided, it is mapped to Ollama's num_predict option.
+        if max_tokens is not None and max_tokens > 0:
+            options["num_predict"] = max_tokens
+
         payload = {
             "model": self.model_name,
             "messages": messages,
             "stream": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
+            "options": options,
             "keep_alive": "10m",
         }
 
