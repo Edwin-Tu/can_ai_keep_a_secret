@@ -3,10 +3,15 @@ Batch runner for local Ollama models.
 
 This script reads configs/local_models.json and runs src/run_benchmark.py for
 all enabled models. It is also used by check.py multi.
+
+Token behavior:
+- max_tokens=None or <= 0 means no explicit output token limit.
+- A positive max_tokens value is passed to run_benchmark.py as --max-tokens.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import subprocess
 import sys
@@ -31,12 +36,28 @@ def load_local_models() -> list[dict[str, Any]]:
     return [item for item in data if item.get("enabled", True)]
 
 
+def normalize_max_tokens(value: Any) -> int | None:
+    if value in (None, "", 0, "0"):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def normalize_model_name(model_name: str) -> str:
+    if model_name == "mock" or model_name.startswith("ollama:"):
+        return model_name
+    return f"ollama:{model_name}"
+
+
 def run_benchmark(model_name: str, temperature: float = 0, max_tokens: int | None = None) -> bool:
     cmd = [
         sys.executable,
         "src/run_benchmark.py",
         "--model",
-        f"ollama:{model_name}",
+        normalize_model_name(model_name),
         "--temperature",
         str(temperature),
     ]
@@ -52,13 +73,23 @@ def run_benchmark(model_name: str, temperature: float = 0, max_tokens: int | Non
     return result.returncode == 0
 
 
-def generate_report() -> int:
+def generate_report(report_mode: str = "public") -> int:
     print("\nGenerating reports...")
-    result = subprocess.run([sys.executable, "src/report_generator.py"], cwd=ROOT)
+    result = subprocess.run(
+        [sys.executable, "src/report_generator.py", "--report-mode", report_mode],
+        cwd=ROOT,
+    )
     return result.returncode
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Run benchmarks for all enabled local Ollama models")
+    parser.add_argument("--temperature", type=float, default=None, help="Override temperature for all models")
+    parser.add_argument("--max-tokens", type=int, default=None, help="Override max tokens for all models. Omit or <=0 for unlimited/model default.")
+    parser.add_argument("--skip-report", action="store_true", help="Do not generate reports after the batch run")
+    parser.add_argument("--report-mode", choices=["public", "internal"], default="public")
+    args = parser.parse_args()
+
     try:
         models = load_local_models()
     except Exception as exc:
@@ -74,13 +105,12 @@ def main() -> int:
 
     for index, item in enumerate(models, start=1):
         model = item["name"]
-        temperature = float(item.get("temperature", 0))
-        max_tokens = item.get("max_tokens", None)
-
-        if max_tokens in ("", 0, "0"):
-            max_tokens = None
+        temperature = args.temperature if args.temperature is not None else float(item.get("temperature", 0))
+        max_tokens = normalize_max_tokens(args.max_tokens if args.max_tokens is not None else item.get("max_tokens", None))
 
         print(f"\n[{index}/{len(models)}] {model}")
+        print(f"Temperature: {temperature}")
+        print(f"Max tokens: {max_tokens if max_tokens is not None else 'unlimited / model default'}")
 
         if run_benchmark(model, temperature, max_tokens):
             success.append(model)
@@ -89,7 +119,8 @@ def main() -> int:
             failed.append(model)
             print(f"[FAIL] {model}")
 
-    generate_report()
+    if not args.skip_report:
+        generate_report(args.report_mode)
 
     print("\n" + "=" * 72)
     print("Batch Summary")
