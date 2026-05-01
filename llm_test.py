@@ -3,20 +3,26 @@ LLM Secret Guard Python Automation CLI.
 
 Main entry for the python_automation branch.
 
-Workflow:
+Interactive workflow:
 1. Environment check / preparation
 2. Select test mode:
-   - Download model(s)
+   - Download model(s), supports multiple models
    - Model testing / list local models
 3. Run benchmark when requested
 4. Generate report when benchmark succeeds
 
-When executed without arguments, this file starts an interactive test wizard.
+Important behavior in this version:
+- Local model listing uses the Ollama HTTP API first, so it still works when
+  the Ollama service is running but ollama.exe is not visible in PATH.
+- Multiple model testing can run directly from installed local models. It no
+  longer depends on configs/local_models.json being populated.
+- configs/local_models.json batch mode is kept as an advanced/legacy option.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import shutil
@@ -25,6 +31,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Optional
+
+import requests
 
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
@@ -46,13 +54,25 @@ from src.automation.benchmark_runner import run_batch_benchmark, run_single_benc
 from src.automation.report_runner import generate_reports
 from src.automation.model_selector import interactive_select_and_run
 
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+
 
 def normalize_model_name(model: str) -> str:
-    """Normalize model name for benchmark runner."""
+    """Normalize a model name for src/run_benchmark.py."""
     model = (model or "").strip()
+    if not model:
+        return ""
     if model == "mock" or model.startswith("ollama:"):
         return model
     return f"ollama:{model}"
+
+
+def ollama_local_name(model: str) -> str:
+    """Return the Ollama model name without the ollama: prefix."""
+    model = (model or "").strip()
+    if model.startswith("ollama:"):
+        return model.split("ollama:", 1)[1]
+    return model
 
 
 def parse_optional_int(raw: str, default: Optional[int] = None) -> Optional[int]:
@@ -68,10 +88,10 @@ def parse_optional_int(raw: str, default: Optional[int] = None) -> Optional[int]
 
 
 def parse_model_names(raw: str) -> list[str]:
-    """Parse one or more Ollama model names from user input.
+    """Parse one or more model names.
 
-    Supported separators: comma, Chinese comma, semicolon, space, or new line.
-    The returned names are plain Ollama names without the optional `ollama:` prefix.
+    Supported separators: comma, Chinese comma, semicolon, space, tab, newline.
+    Returned names are plain Ollama names without the optional ollama: prefix.
     """
     if not raw:
         return []
@@ -83,11 +103,7 @@ def parse_model_names(raw: str) -> list[str]:
     models: list[str] = []
     seen: set[str] = set()
     for item in normalized.split(" "):
-        model = item.strip()
-        if not model:
-            continue
-        if model.startswith("ollama:"):
-            model = model.split("ollama:", 1)[1]
+        model = ollama_local_name(item.strip())
         if model and model not in seen:
             models.append(model)
             seen.add(model)
@@ -108,17 +124,14 @@ def ask_yes_no(prompt: str, default: bool = True) -> bool:
     return value in {"y", "yes", "1", "true", "是", "好"}
 
 
-
-def ollama_local_name(model: str) -> str:
-    """Return the model name without the ollama: prefix."""
-    normalized = normalize_model_name(model)
-    if normalized.startswith("ollama:"):
-        return normalized.split("ollama:", 1)[1]
-    return normalized
-
-
 def find_ollama_executable() -> Optional[Path]:
-    """Find ollama executable from PATH or common install locations."""
+    """Find ollama executable from OLLAMA_EXE, PATH, or common locations."""
+    env_exe = os.environ.get("OLLAMA_EXE")
+    if env_exe:
+        candidate = Path(env_exe)
+        if candidate.exists():
+            return candidate
+
     found = shutil.which("ollama")
     if found:
         return Path(found)
@@ -129,10 +142,12 @@ def find_ollama_executable() -> Optional[Path]:
     program_files_x86 = os.environ.get("ProgramFiles(x86)")
 
     if local_appdata:
-        candidates.extend([
-            Path(local_appdata) / "Programs" / "Ollama" / "ollama.exe",
-            Path(local_appdata) / "Ollama" / "ollama.exe",
-        ])
+        candidates.extend(
+            [
+                Path(local_appdata) / "Programs" / "Ollama" / "ollama.exe",
+                Path(local_appdata) / "Ollama" / "ollama.exe",
+            ]
+        )
     if program_files:
         candidates.append(Path(program_files) / "Ollama" / "ollama.exe")
     if program_files_x86:
@@ -141,12 +156,11 @@ def find_ollama_executable() -> Optional[Path]:
     for candidate in candidates:
         if candidate.exists():
             return candidate
-
     return None
 
 
 def refresh_ollama_path() -> Optional[Path]:
-    """Add the detected Ollama folder to PATH for the current Python process."""
+    """Add detected Ollama folder to PATH for the current Python process."""
     exe = find_ollama_executable()
     if not exe:
         return None
@@ -269,102 +283,96 @@ def install_ollama() -> bool:
 
 
 def ensure_ollama_ready(allow_install: bool = True) -> bool:
-    """Ensure Ollama CLI/API is available; optionally install/start it."""
+    """Ensure Ollama API is available; optionally install/start it."""
     if check_ollama_api(quiet=True):
         return True
-
     if start_ollama_server():
         return True
-
-    if allow_install:
-        if install_ollama():
-            return check_ollama_api(quiet=True) or start_ollama_server()
+    if allow_install and install_ollama():
+        return check_ollama_api(quiet=True) or start_ollama_server()
 
     print("[FAIL] Ollama API is not available at http://localhost:11434.")
+    print("[INFO] Open the Ollama app or run `ollama serve`, then retry.")
     return False
 
 
-def ensure_ollama_model_available(model: str, auto_pull: bool = False) -> bool:
-    """Ensure an Ollama model exists locally, offering to pull it when missing."""
-    normalized = normalize_model_name(model)
-    if normalized == "mock":
-        return True
-
-    if not normalized.startswith("ollama:"):
-        return True
-
+def get_local_models() -> list[str]:
+    """Return local Ollama models using the API-first path."""
     if not ensure_ollama_ready(allow_install=True):
-        return False
+        return []
+    models = get_installed_models()
+    return sorted(dict.fromkeys(models))
 
-    local_name = ollama_local_name(normalized)
-    try:
-        installed = get_installed_models()
-    except Exception as exc:
-        print(f"[WARN] Could not read installed models: {exc}")
-        installed = []
 
-    if local_name in installed:
-        return True
+def print_local_model_list(models: Optional[list[str]] = None) -> list[str]:
+    """Print local Ollama models and return their names."""
+    installed = get_local_models() if models is None else models
 
-    print(f"[WARN] Model not installed: {local_name}")
-    should_pull = auto_pull or ask_yes_no(f"Download {local_name} now?", default=True)
-    if not should_pull:
-        return False
-
-    result = pull_model(local_name)
-    if result != 0:
-        print(f"[FAIL] Failed to pull model: {local_name}")
-        return False
-
-    return True
-
-def choose_model_interactively(allow_mock: bool = True) -> str:
-    """Ask user to choose mock or an installed Ollama model."""
-    print("\nAvailable choices:")
-    if allow_mock:
-        print("  0. mock")
-
-    installed = []
-    if check_ollama_api(quiet=True):
-        try:
-            installed = get_installed_models()
-        except Exception as exc:  # defensive: wizard should not crash on list failure
-            print(f"[WARN] Could not list Ollama models: {exc}")
+    print("\nLocal Ollama model list")
+    print("=" * 72)
+    if not installed:
+        print("[INFO] No local Ollama models were found.")
+        print("[INFO] Use download mode first, for example:")
+        print("       python llm_test.py pull llama3.2:1b qwen2.5:3b")
+        return []
 
     for index, model in enumerate(installed, start=1):
         print(f"  {index}. {model}")
+    return installed
 
-    print("  M. Manually type model name")
 
-    default_choice = "0" if allow_mock else ("1" if installed else "M")
-    choice = ask("Select model", default_choice)
+def pull_model_via_api(model: str) -> int:
+    """Pull an Ollama model through the local HTTP API when CLI is unavailable."""
+    if not check_ollama_api(quiet=True):
+        print("[FAIL] Ollama API is unavailable. Cannot download model through API.")
+        return 1
 
-    if choice.lower() == "m":
-        model = normalize_model_name(
-            ask("Enter model name, e.g. llama3.2:1b or ollama:llama3.2:1b", "")
-        )
-        if not model:
-            print("[FAIL] No model entered.")
-            return "mock" if allow_mock else ""
-        if model != "mock" and not ensure_ollama_model_available(model):
-            print("[FAIL] Selected model is not available.")
-            return "mock" if allow_mock else ""
-        return model
-
+    print(f"[INFO] Pulling via Ollama API: {model}")
     try:
-        selected_index = int(choice)
-    except ValueError:
-        print("[WARN] Invalid selection.")
-        return "mock" if allow_mock else ""
+        with requests.post(
+            f"{OLLAMA_BASE_URL}/api/pull",
+            json={"name": model, "stream": True},
+            timeout=600,
+            stream=True,
+        ) as response:
+            response.raise_for_status()
+            for raw_line in response.iter_lines(decode_unicode=True):
+                if not raw_line:
+                    continue
+                try:
+                    data = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    print(raw_line)
+                    continue
+                status = data.get("status")
+                completed = data.get("completed")
+                total = data.get("total")
+                if completed and total:
+                    percent = completed / total * 100
+                    print(f"[INFO] {status}: {percent:.1f}%")
+                elif status:
+                    print(f"[INFO] {status}")
+                if data.get("error"):
+                    print(f"[FAIL] {data['error']}")
+                    return 1
+    except Exception as exc:
+        print(f"[FAIL] API pull failed: {exc}")
+        return 1
 
-    if allow_mock and selected_index == 0:
-        return "mock"
+    return 0
 
-    if 1 <= selected_index <= len(installed):
-        return normalize_model_name(installed[selected_index - 1])
 
-    print("[WARN] Selection out of range.")
-    return "mock" if allow_mock else ""
+def pull_one_model(model: str) -> int:
+    """Pull one model through CLI when possible, otherwise through API."""
+    model = ollama_local_name(model)
+    if not model:
+        print("[FAIL] Empty model name.")
+        return 1
+
+    exe = refresh_ollama_path()
+    if exe:
+        return pull_model(model)
+    return pull_model_via_api(model)
 
 
 def pull_models(models: list[str]) -> int:
@@ -389,7 +397,7 @@ def pull_models(models: list[str]) -> int:
         print("\n" + "=" * 72)
         print(f"Download model [{index}/{len(cleaned_models)}]: {model}")
         print("=" * 72)
-        code = pull_model(model)
+        code = pull_one_model(model)
         if code != 0:
             failed.append(model)
             print(f"[FAIL] Failed to download: {model}")
@@ -418,22 +426,121 @@ def download_models_interactively() -> int:
     return pull_models(parse_model_names(raw))
 
 
-def print_local_model_list() -> list[str]:
-    """Print local Ollama models and return their names."""
+def ensure_ollama_model_available(model: str, auto_pull: bool = False) -> bool:
+    """Ensure an Ollama model exists locally, offering to pull it when missing."""
+    normalized = normalize_model_name(model)
+    if normalized == "mock":
+        return True
+    if not normalized.startswith("ollama:"):
+        return True
     if not ensure_ollama_ready(allow_install=True):
-        return []
+        return False
 
+    local_name = ollama_local_name(normalized)
     installed = get_installed_models()
-    print("\nLocal Ollama model list")
-    print("=" * 72)
-    if not installed:
-        print("[INFO] No local Ollama models were found.")
-        print("[INFO] Use download mode first if you want to test local models.")
-        return []
+    if local_name in installed:
+        return True
 
-    for index, model in enumerate(installed, start=1):
-        print(f"  {index}. {model}")
-    return installed
+    print(f"[WARN] Model not installed: {local_name}")
+    should_pull = auto_pull or ask_yes_no(f"Download {local_name} now?", default=True)
+    if not should_pull:
+        return False
+
+    if pull_one_model(local_name) != 0:
+        print(f"[FAIL] Failed to pull model: {local_name}")
+        return False
+    return True
+
+
+def parse_model_selection(raw: str, installed: list[str]) -> list[str]:
+    """Parse model selection from indices, ranges, names, or all.
+
+    Examples:
+    - all
+    - 1 2 3
+    - 1,3
+    - 1-3
+    - llama3.2:1b qwen2.5:3b
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    if raw.lower() in {"all", "a", "全部"}:
+        return installed[:]
+
+    tokens = parse_model_names(raw)
+    selected: list[str] = []
+    seen: set[str] = set()
+
+    def add_model(model: str) -> None:
+        model = ollama_local_name(model)
+        if model and model not in seen:
+            selected.append(model)
+            seen.add(model)
+
+    for token in tokens:
+        if "-" in token and all(part.strip().isdigit() for part in token.split("-", 1)):
+            start_raw, end_raw = token.split("-", 1)
+            start, end = int(start_raw), int(end_raw)
+            if start > end:
+                start, end = end, start
+            for index in range(start, end + 1):
+                if 1 <= index <= len(installed):
+                    add_model(installed[index - 1])
+                else:
+                    print(f"[WARN] Selection index out of range: {index}")
+            continue
+
+        if token.isdigit():
+            index = int(token)
+            if 1 <= index <= len(installed):
+                add_model(installed[index - 1])
+            else:
+                print(f"[WARN] Selection index out of range: {index}")
+            continue
+
+        add_model(token)
+
+    return selected
+
+
+def choose_model_interactively(allow_mock: bool = True) -> str:
+    """Ask user to choose mock, an installed Ollama model, or manual model name."""
+    installed = print_local_model_list()
+
+    print("\nAvailable choices:")
+    if allow_mock:
+        print("  0. mock")
+    print("  M. Manually type model name")
+
+    default_choice = "0" if allow_mock else ("1" if installed else "M")
+    choice = ask("Select model", default_choice)
+
+    if choice.lower() == "m":
+        model = normalize_model_name(
+            ask("Enter model name, e.g. llama3.2:1b or ollama:llama3.2:1b", "")
+        )
+        if not model:
+            print("[FAIL] No model entered.")
+            return "mock" if allow_mock else ""
+        if model != "mock" and not ensure_ollama_model_available(model):
+            print("[FAIL] Selected model is not available.")
+            return "mock" if allow_mock else ""
+        return model
+
+    try:
+        selected_index = int(choice)
+    except ValueError:
+        print("[WARN] Invalid selection.")
+        return "mock" if allow_mock else ""
+
+    if allow_mock and selected_index == 0:
+        return "mock"
+    if 1 <= selected_index <= len(installed):
+        return normalize_model_name(installed[selected_index - 1])
+
+    print("[WARN] Selection out of range.")
+    return "mock" if allow_mock else ""
 
 
 def ask_benchmark_options() -> tuple[float, Optional[int], str]:
@@ -458,34 +565,104 @@ def ask_benchmark_options() -> tuple[float, Optional[int], str]:
     return temperature, max_tokens, report_mode
 
 
+def run_multiple_local_benchmarks(
+    models: list[str],
+    temperature: float = 0,
+    max_tokens: int | None = None,
+    report_mode: str = "public",
+) -> int:
+    """Run benchmark for multiple selected local models."""
+    cleaned = []
+    seen: set[str] = set()
+    for model in models:
+        local_name = ollama_local_name(model)
+        if local_name and local_name not in seen:
+            cleaned.append(local_name)
+            seen.add(local_name)
+
+    if not cleaned:
+        print("[FAIL] No models selected for multiple model test.")
+        return 1
+
+    print("\n" + "=" * 72)
+    print("Run multiple local model benchmarks")
+    print("=" * 72)
+    print("Models:")
+    for model in cleaned:
+        print(f"  - {model}")
+
+    success: list[str] = []
+    failed: list[str] = []
+
+    for index, model in enumerate(cleaned, start=1):
+        print("\n" + "=" * 72)
+        print(f"[{index}/{len(cleaned)}] Benchmark model: {model}")
+        print("=" * 72)
+
+        normalized = normalize_model_name(model)
+        if not ensure_ollama_model_available(normalized, auto_pull=False):
+            failed.append(model)
+            continue
+
+        code = run_single_benchmark(
+            model=normalized,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        if code == 0:
+            success.append(model)
+            print(f"[OK] Benchmark completed: {model}")
+        else:
+            failed.append(model)
+            print(f"[FAIL] Benchmark failed: {model}")
+
+    if success:
+        print("\nGenerate report")
+        report_code = generate_reports(mode=report_mode)
+        if report_code != 0:
+            print("[FAIL] Report generation failed.")
+            return report_code
+    else:
+        print("[FAIL] No successful benchmark runs. Report generation skipped.")
+
+    print("\n" + "=" * 72)
+    print("Multiple Model Test Summary")
+    print("=" * 72)
+    print(f"Success: {len(success)}")
+    for model in success:
+        print(f"  [OK] {model}")
+    print(f"Failed: {len(failed)}")
+    for model in failed:
+        print(f"  [FAIL] {model}")
+
+    return 0 if not failed and success else 1
+
+
 def run_model_test_menu() -> int:
     """Interactive test/list flow for local models."""
     if not ensure_ollama_ready(allow_install=True):
         print("[FAIL] Ollama is required for local model testing.")
         return 1
 
-    print_local_model_list()
+    installed = print_local_model_list()
 
     print("\nModel testing / local model list")
-    print("  1. Single model test")
-    print("  2. Multiple model test from configs/local_models.json")
-    print("  3. List local models only")
+    print("  1. List local models only")
+    print("  2. Single model test")
+    print("  3. Multiple model test from local installed models")
+    print("  4. Batch models from configs/local_models.json (advanced)")
     test_mode = ask("Choose action", "1")
 
-    if test_mode == "3":
+    if test_mode == "1":
         return 0
+
+    if test_mode not in {"2", "3", "4"}:
+        print("[WARN] Invalid action. Please choose 1, 2, 3, or 4.")
+        return 1
 
     temperature, max_tokens, report_mode = ask_benchmark_options()
 
-    print("\nRun benchmark")
     if test_mode == "2":
-        code = run_batch_benchmark(
-            temperature=temperature,
-            max_tokens=max_tokens,
-            report_mode=report_mode,
-            skip_report=True,
-        )
-    else:
         model = choose_model_interactively(allow_mock=False)
         if not model:
             print("[FAIL] No valid model selected. Benchmark skipped.")
@@ -498,13 +675,41 @@ def run_model_test_menu() -> int:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        if code != 0:
+            print("[FAIL] Benchmark failed. Report generation skipped.")
+            return code
+        print("\nGenerate report")
+        return generate_reports(mode=report_mode)
 
-    if code != 0:
-        print("[FAIL] Benchmark failed. Report generation skipped.")
-        return code
+    if test_mode == "3":
+        if not installed:
+            print("[FAIL] No local models available for multiple model test.")
+            return 1
+        print("\nSelect multiple models")
+        print("Examples:")
+        print("  all")
+        print("  1 2 3")
+        print("  1,3")
+        print("  1-3")
+        print("  llama3.2:1b qwen2.5:3b")
+        raw = ask("Choose model numbers/names", "all")
+        selected = parse_model_selection(raw, installed)
+        return run_multiple_local_benchmarks(
+            selected,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            report_mode=report_mode,
+        )
 
-    print("\nGenerate report")
-    return generate_reports(mode=report_mode)
+    # Advanced legacy config-file mode.
+    code = run_batch_benchmark(
+        temperature=temperature,
+        max_tokens=max_tokens,
+        report_mode=report_mode,
+        skip_report=False,
+    )
+    return code
+
 
 def run_wizard() -> int:
     """Interactive no-argument flow: env -> download or test/list."""
@@ -540,12 +745,12 @@ def run_wizard() -> int:
 
     if mode == "1":
         return download_models_interactively()
-
     if mode == "2":
         return run_model_test_menu()
 
     print("[WARN] Invalid mode. Please choose 1 or 2.")
     return 1
+
 
 def add_common_benchmark_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--temperature", type=float, default=0, help="Model temperature. Default: 0.")
@@ -575,7 +780,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("wizard", help="Run interactive test wizard")
     sub.add_parser("install-ollama", help="Download/install Ollama, then try to start the local API")
-    sub.add_parser("list", help="List local Ollama models")
+    sub.add_parser("list", help="List local Ollama models through API-first path")
 
     pull = sub.add_parser("pull", help="Pull one or more Ollama models")
     pull.add_argument("models", nargs="+", help="Example: llama3.2:1b qwen2.5:3b")
@@ -599,9 +804,13 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_benchmark_args(run)
     run.add_argument("--pull-if-missing", action="store_true", help="Pull Ollama model if it is missing.")
 
-    batch = sub.add_parser("batch", help="Run all enabled models in configs/local_models.json")
+    batch = sub.add_parser("batch", help="Run multiple local models. If no model is provided, run all installed models.")
+    batch.add_argument("models", nargs="*", help="Optional model names. Example: llama3.2:1b qwen2.5:3b")
     add_common_benchmark_args(batch)
-    batch.add_argument("--skip-report", action="store_true", help="Do not generate reports after batch run.")
+
+    batch_config = sub.add_parser("batch-config", help="Advanced: run models from configs/local_models.json")
+    add_common_benchmark_args(batch_config)
+    batch_config.add_argument("--skip-report", action="store_true", help="Do not generate reports after batch run.")
 
     report = sub.add_parser("report", help="Generate reports from results/*.csv")
     report.add_argument("--mode", choices=["public", "internal"], default="public", help="Report mode.")
@@ -609,7 +818,7 @@ def build_parser() -> argparse.ArgumentParser:
     select = sub.add_parser("select", help="Interactive model selection and run")
     add_common_benchmark_args(select)
 
-    all_cmd = sub.add_parser("all", help="Run env check, batch benchmark, then reports")
+    all_cmd = sub.add_parser("all", help="Run env check, all installed local models, then reports")
     add_common_benchmark_args(all_cmd)
 
     clean = sub.add_parser("clean", help="Delete generated outputs")
@@ -666,9 +875,8 @@ def main() -> int:
         return 0 if ensure_ollama_ready(allow_install=True) else 1
 
     if args.command == "list":
-        if not ensure_ollama_ready(allow_install=True):
-            return 1
-        return list_models()
+        print_local_model_list()
+        return 0
 
     if args.command in {"pull", "download"}:
         return pull_models(args.models)
@@ -676,12 +884,12 @@ def main() -> int:
     if args.command == "show":
         if not ensure_ollama_ready(allow_install=True):
             return 1
-        return show_model(args.model)
+        return show_model(ollama_local_name(args.model))
 
     if args.command == "stop":
         if not ensure_ollama_ready(allow_install=False):
             return 1
-        return stop_model(args.model)
+        return stop_model(ollama_local_name(args.model))
 
     if args.command == "test":
         model = normalize_model_name(args.model)
@@ -712,6 +920,19 @@ def main() -> int:
     if args.command == "batch":
         if not ensure_ollama_ready(allow_install=True):
             return 1
+        models = [ollama_local_name(model) for model in args.models]
+        if not models:
+            models = print_local_model_list()
+        return run_multiple_local_benchmarks(
+            models,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            report_mode=args.report_mode,
+        )
+
+    if args.command == "batch-config":
+        if not ensure_ollama_ready(allow_install=True):
+            return 1
         return run_batch_benchmark(
             temperature=args.temperature,
             max_tokens=args.max_tokens,
@@ -733,11 +954,12 @@ def main() -> int:
         run_env_check(fix=True)
         if not ensure_ollama_ready(allow_install=True):
             return 1
-        return run_batch_benchmark(
+        models = print_local_model_list()
+        return run_multiple_local_benchmarks(
+            models,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
             report_mode=args.report_mode,
-            skip_report=False,
         )
 
     if args.command == "clean":
