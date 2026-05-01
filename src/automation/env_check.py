@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -13,7 +14,8 @@ from .ollama_tools import (
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# module_name is the import name; package_name is the pip package name.
+# Tuple format: (module import name, pip package name)
+# Example: Python imports `dotenv`, but pip installs `python-dotenv`.
 REQUIRED_PYTHON_MODULES: list[tuple[str, str]] = [
     ("requests", "requests"),
     ("dotenv", "python-dotenv"),
@@ -41,8 +43,54 @@ def _check_module(name: str) -> bool:
     return importlib.util.find_spec(name) is not None
 
 
-def _print_install_hint(package_name: str) -> None:
+def _run_pip_install(package_name: str) -> bool:
+    """Install one Python package into the currently running interpreter."""
+    cmd = [sys.executable, "-m", "pip", "install", package_name]
+    print(f"[INFO] Installing missing package: {' '.join(cmd)}")
+
+    result = subprocess.run(cmd, cwd=ROOT)
+    if result.returncode == 0:
+        return True
+
+    print(f"[WARN] pip install failed for {package_name}. Trying ensurepip then retrying...")
+    ensurepip_result = subprocess.run(
+        [sys.executable, "-m", "ensurepip", "--upgrade"],
+        cwd=ROOT,
+    )
+    if ensurepip_result.returncode != 0:
+        print("[FAIL] ensurepip failed. Please install pip or Python packages manually.")
+        return False
+
+    retry_result = subprocess.run(cmd, cwd=ROOT)
+    return retry_result.returncode == 0
+
+
+def _check_or_install_python_module(
+    module_name: str,
+    package_name: str,
+    fix: bool,
+) -> bool:
+    """Check one Python module and optionally install the matching pip package."""
+    installed = _check_module(module_name)
+    _status(installed, f"Python module {module_name}")
+
+    if installed:
+        return True
+
     print(f"[INFO] Install with: {sys.executable} -m pip install {package_name}")
+
+    if not fix:
+        return False
+
+    installed_now = _run_pip_install(package_name)
+    if not installed_now:
+        _status(False, f"Auto-install package {package_name}")
+        return False
+
+    # Re-check after installation to avoid false positives.
+    rechecked = _check_module(module_name)
+    _status(rechecked, f"Python module {module_name} after install")
+    return rechecked
 
 
 def ensure_directories() -> None:
@@ -52,18 +100,12 @@ def ensure_directories() -> None:
         _status(True, f"{folder}/ ready", str(path))
 
 
-def check_required_python_modules() -> bool:
+def check_directories() -> bool:
     ok = True
-
-    for module_name, package_name in REQUIRED_PYTHON_MODULES:
-        installed = _check_module(module_name)
-        _status(installed, f"Python module {module_name}")
-
-        if not installed:
-            _print_install_hint(package_name)
-
-        ok = ok and installed
-
+    for folder in OUTPUT_DIRECTORIES:
+        exists = (ROOT / folder).exists()
+        _status(exists, f"{folder}/ exists")
+        ok = ok and exists
     return ok
 
 
@@ -72,11 +114,11 @@ def run_env_check(fix: bool = False, require_ollama: bool = True) -> int:
     Check local environment.
 
     Important behavior:
+    - fix=True creates required output folders.
+    - fix=True auto-installs missing Python packages into the current interpreter.
     - Ollama API available = local Ollama service is usable.
     - Ollama CLI missing = warning only if API is available.
     - This avoids failing when Ollama is installed/running but not in PATH.
-    - Matplotlib is checked because chart generation is part of the default
-      report flow.
     """
     print("=" * 72)
     print("Environment check")
@@ -86,20 +128,25 @@ def run_env_check(fix: bool = False, require_ollama: bool = True) -> int:
 
     py_version = sys.version.split()[0]
     _status(True, "Python", py_version)
+    print(f"[INFO] Python executable: {sys.executable}")
 
     requirements_path = ROOT / "requirements.txt"
     requirements_ok = requirements_path.exists()
     _status(requirements_ok, "requirements.txt", str(requirements_path))
     ok = ok and requirements_ok
 
-    modules_ok = check_required_python_modules()
-    ok = ok and modules_ok
+    for module_name, package_name in REQUIRED_PYTHON_MODULES:
+        module_ok = _check_or_install_python_module(
+            module_name=module_name,
+            package_name=package_name,
+            fix=fix,
+        )
+        ok = ok and module_ok
 
     if fix:
         ensure_directories()
     else:
-        for folder in OUTPUT_DIRECTORIES:
-            _status((ROOT / folder).exists(), f"{folder}/ exists")
+        ok = check_directories() and ok
 
     config_path = ROOT / "configs" / "local_models.json"
     config_ok = config_path.exists()
