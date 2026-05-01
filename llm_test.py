@@ -51,7 +51,7 @@ from src.automation.ollama_tools import (
     stop_model,
 )
 from src.automation.benchmark_runner import run_batch_benchmark, run_single_benchmark
-from src.automation.report_runner import generate_reports
+from src.automation.report_runner import generate_charts, generate_reports
 from src.automation.model_selector import interactive_select_and_run
 
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
@@ -812,8 +812,16 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_benchmark_args(batch_config)
     batch_config.add_argument("--skip-report", action="store_true", help="Do not generate reports after batch run.")
 
-    report = sub.add_parser("report", help="Generate reports from results/*.csv")
+    report = sub.add_parser("report", help="Generate reports from results/*.csv, then generate charts by default")
     report.add_argument("--mode", choices=["public", "internal"], default="public", help="Report mode.")
+    report.add_argument("--no-charts", action="store_true", help="Generate reports only; skip automatic chart generation.")
+
+    chart = sub.add_parser("chart", help="Generate charts from results/report.json")
+    chart.add_argument("chart_id", nargs="?", default=None, help="Optional chart id. Omit or use 'all' to generate every chart.")
+    chart.add_argument("--list", action="store_true", help="List available chart modules.")
+    chart.add_argument("--input", default="results/report.json", help="Input structured report JSON path.")
+    chart.add_argument("--output", default="visuals", help="Chart output directory.")
+    chart.add_argument("--model", default=None, help="Optional model filter. Example: ollama:qwen2.5:7b")
 
     select = sub.add_parser("select", help="Interactive model selection and run")
     add_common_benchmark_args(select)
@@ -824,7 +832,8 @@ def build_parser() -> argparse.ArgumentParser:
     clean = sub.add_parser("clean", help="Delete generated outputs")
     clean.add_argument("--results", action="store_true", help="Delete CSV files in results/")
     clean.add_argument("--reports", action="store_true", help="Delete generated reports in reports/")
-    clean.add_argument("--all", action="store_true", help="Delete results and reports")
+    clean.add_argument("--visuals", action="store_true", help="Delete generated chart images in visuals/")
+    clean.add_argument("--all", action="store_true", help="Delete results, reports, and visuals")
 
     return parser
 
@@ -832,16 +841,18 @@ def build_parser() -> argparse.ArgumentParser:
 def clean_outputs(args: argparse.Namespace) -> int:
     delete_results = args.results or args.all
     delete_reports = args.reports or args.all
+    delete_visuals = args.visuals or args.all
 
-    if not delete_results and not delete_reports:
-        print("[INFO] Nothing selected. Use --results, --reports, or --all.")
+    if not delete_results and not delete_reports and not delete_visuals:
+        print("[INFO] Nothing selected. Use --results, --reports, --visuals, or --all.")
         return 0
 
     if delete_results:
         results_dir = ROOT / "results"
-        for path in results_dir.glob("results_*.csv"):
-            path.unlink()
-            print(f"[DEL] {path}")
+        for pattern in ("results_*.csv", "report.json"):
+            for path in results_dir.glob(pattern):
+                path.unlink()
+                print(f"[DEL] {path}")
 
     if delete_reports:
         reports_dir = ROOT / "reports"
@@ -849,6 +860,12 @@ def clean_outputs(args: argparse.Namespace) -> int:
             for path in reports_dir.glob(pattern):
                 path.unlink()
                 print(f"[DEL] {path}")
+
+    if delete_visuals:
+        visuals_dir = ROOT / "visuals"
+        for path in visuals_dir.glob("*.png"):
+            path.unlink()
+            print(f"[DEL] {path}")
 
     return 0
 
@@ -941,7 +958,21 @@ def main() -> int:
         )
 
     if args.command == "report":
-        return generate_reports(mode=args.mode)
+        return generate_reports(
+            mode=args.mode,
+            generate_chart_outputs=not args.no_charts,
+        )
+
+    if args.command == "chart":
+        if args.list:
+            return subprocess.call([sys.executable, "src/chart_runner.py", "list"], cwd=ROOT)
+        chart_id = None if args.chart_id in (None, "all") else args.chart_id
+        return generate_charts(
+            chart_id=chart_id,
+            report_json=args.input,
+            output_dir=args.output,
+            model=args.model,
+        )
 
     if args.command == "select":
         return interactive_select_and_run(
