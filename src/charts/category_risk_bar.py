@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import matplotlib
 
@@ -9,59 +8,64 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from src.charting.context import ChartContext
-from src.charting.utils import chart_output_path, model_label, require_models
+from src.charting.labels_zh import (
+    CHART_DESCRIPTIONS_ZH,
+    CHART_TITLES_ZH,
+    NO_DATA_TEXT_ZH,
+    category_label,
+    model_display_name,
+)
+from src.charting.utils import (
+    apply_font_to_texts,
+    chart_output_path,
+    model_label,
+    require_models,
+    set_xlabel,
+    set_title,
+    setup_matplotlib_chinese,
+)
 
 CHART_ID = "category_risk_bar"
-CHART_NAME = "Category Risk Horizontal Bar Chart"
-DESCRIPTION = "Generate one category risk chart for each selected model, sorted by highest leak level."
+CHART_NAME = CHART_TITLES_ZH[CHART_ID]
+DESCRIPTION = CHART_DESCRIPTIONS_ZH[CHART_ID]
 
 
-def _to_int(value: Any, default: int = 0) -> int:
+def _to_int(value: object, default: int = 0) -> int:
     try:
         return int(float(value))
     except (TypeError, ValueError):
         return default
 
 
-def _to_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _short_label(text: str, limit: int = 34) -> str:
-    text = text.strip() or "unknown"
-    return text if len(text) <= limit else text[: limit - 3] + "..."
-
-
 def render(context: ChartContext) -> list[Path]:
     models = context.models()
     require_models(models)
 
+    font_prop = setup_matplotlib_chinese()
     output_paths: list[Path] = []
 
     for model in models:
-        label = model_label(model)
+        raw_model_name = model_label(model)
+        display_name = model_display_name(raw_model_name)
         category_rows = list(model.get("category_performance", []) or [])
         category_rows.sort(
             key=lambda item: (
                 _to_int(item.get("highest_leak_level", 0)),
                 _to_int(item.get("fail_count", 0)),
-                -_to_float(item.get("average_score", 0)),
+                _to_int(item.get("test_count", 0)),
             ),
             reverse=True,
         )
 
-        categories = [_short_label(str(item.get("category", "unknown"))) for item in category_rows]
+        categories = [category_label(item.get("category", "unknown")) for item in category_rows]
         leak_levels = [_to_int(item.get("highest_leak_level", 0)) for item in category_rows]
 
-        output_path = chart_output_path(context.visuals_dir, CHART_ID, label)
-        fig_height = max(6, min(18, len(categories) * 0.48 + 2))
-        fig, ax = plt.subplots(figsize=(10, fig_height))
+        output_path = chart_output_path(context.visuals_dir, CHART_ID, raw_model_name)
+        fig_height = max(6, min(18, len(categories) * 0.45 + 2.5))
+        fig, ax = plt.subplots(figsize=(10.5, fig_height))
 
         if not categories:
-            ax.text(0.5, 0.5, "No category risk data", ha="center", va="center")
+            ax.text(0.5, 0.5, NO_DATA_TEXT_ZH["category_performance"], ha="center", va="center")
             ax.axis("off")
         else:
             y_positions = range(len(categories))
@@ -69,18 +73,18 @@ def render(context: ChartContext) -> list[Path]:
             ax.set_yticks(list(y_positions), categories)
             ax.invert_yaxis()
             ax.set_xlim(0, 4)
-            ax.set_xlabel("Highest Leak Level (0 = safest, 4 = full leak)")
-            ax.set_title(f"Category Risk by Highest Leak Level\n{label}")
+            set_xlabel(ax, "最高洩漏等級（0=安全，4=完整洩漏）", font_prop=font_prop)
             ax.grid(axis="x", linestyle="--", linewidth=0.6, alpha=0.6)
 
             for index, item in enumerate(category_rows):
-                leak_level = _to_int(item.get("highest_leak_level", 0))
+                level = _to_int(item.get("highest_leak_level", 0))
                 fail_count = _to_int(item.get("fail_count", 0))
-                avg_score = _to_float(item.get("average_score", 0))
-                risk_level = str(item.get("risk_level", "N/A"))
-                note = f"L{leak_level} | fail {fail_count} | avg {avg_score:g} | {risk_level}"
-                ax.text(min(leak_level + 0.05, 4.05), index, note, va="center")
+                test_count = _to_int(item.get("test_count", 0))
+                note = f"L{level}｜失敗 {fail_count}/{test_count}"
+                ax.text(level + 0.05, index, note, va="center")
 
+        set_title(ax, f"{CHART_NAME}\n{display_name}", font_prop=font_prop, fontsize=15, pad=16)
+        apply_font_to_texts(fig, font_prop)
         fig.tight_layout()
         fig.savefig(output_path, dpi=160, bbox_inches="tight")
         plt.close(fig)
