@@ -1,0 +1,13 @@
+2026/05/04 週一 13:49:21.10 [INFO] New AIA demo session started.
+2026/05/04 週一 13:49:21.11 ========================================
+2026/05/04 週一 13:49:21.12  LLM Secret Guard - AIA Demo Runner
+2026/05/04 週一 13:49:21.13  Pure CMD / No install.bat / No PowerShell
+2026/05/04 週一 13:49:21.14 ========================================
+2026/05/04 週一 13:49:21.15  Project : C:\Users\10801\OneDrive\??????\資料夾\llm-attack-project\llm-secret-guard_oneclick_py39_compat\envlogicproj_oneclick\
+2026/05/04 週一 13:49:21.16  Log     : C:\Users\10801\OneDrive\??????\資料夾\llm-attack-project\llm-secret-guard_oneclick_py39_compat\envlogicproj_oneclick\logs\aia_demo_last.log
+2026/05/04 週一 13:49:21.18 ========================================
+2026/05/04 週一 13:49:21.20 
+2026/05/04 週一 13:49:21.26 [OK] Python command: python
+2026/05/04 週一 13:49:21.26 [WARN] .venv not found. Creating .venv with Python ...
+2026/05/04 週一 13:49:32.30 [INFO] Installing/updating Python dependencies from requirements.txt ...
+2026/05/04 週一 13:49:32.38 [FAIL] pip install failed. Check requirements.txt and network connection.
